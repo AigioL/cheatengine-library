@@ -1,0 +1,9 @@
+GetCurrentProcess
+GetCurrentThreadId
+GetFileSizeEx
+IsWow64Process
+ReadProcessMemory
+WriteProcessMemory
+VirtualQueryEx
+OpenProcess
+GetAsyncKeyState

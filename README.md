@@ -56,6 +56,22 @@ The first goal of this project is to give you the ability to make your own softw
 ## What's new ?
 **Please refer to the CHANGELOG file to get informations about the last release**
 
+## C# port
+
+The repository now also contains a .NET 10 C# port of the Pascal units under `library/` in the `library_csharp/` folder.
+
+### C# port details
+* Target framework: `net10.0-windows`
+* NativeAOT and trimming analyzers are enabled
+* Win32 interop is generated through `Microsoft.Windows.CsWin32`
+* The port keeps the original unit coverage from `library/` and exposes the migrated code as the `CheatEngine.Library` assembly
+
+### Build the C# library
+1. Install the .NET 10 SDK
+2. Run `dotnet build library_csharp/CheatEngine.Library.csproj`
+
+The resulting assembly is generated under `library_csharp/bin/Debug/net10.0-windows/`.
+
 ## Where should I begin ?
 
 1. If you need an turnkey solution you should download :
