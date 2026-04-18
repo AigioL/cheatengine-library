@@ -5888,7 +5888,7 @@ begin
   r.clear;
   if savedresults=nil then
   begin
-    r.add('FIRST');
+    r.add('First');
     result:=1;
   end
   else
@@ -5919,7 +5919,7 @@ begin
 
 
   //everything looks ok
-  waittilldone;
+  waittillreallydone;
 
 
   //copy the current scanresults to memory.savedscan and addresses.savedscan
@@ -5973,7 +5973,9 @@ begin
   begin
     result:=scancontroller.FoundSomething;
     addresses:=scancontroller.AddressesFound;
-  end;
+  end
+  else
+    result:=false;
 end;
 
 function TMemscan.GetOnlyOneResult(var address: ptruint):boolean;
@@ -5982,7 +5984,9 @@ begin
   begin
     result:=scancontroller.FoundSomething;
     address:=scancontroller.AddressFound;
-  end;
+  end
+  else
+    result:=false;
 end;
 
 function TMemscan.GetScanFolder: string;

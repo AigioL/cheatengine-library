@@ -1,0 +1,39 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<AssemblyName>CELib</AssemblyName>
+		<TargetFramework>net10.0</TargetFramework>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<PublishAot>true</PublishAot>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<DirectPInvoke Include="ce-lib" />
+	</ItemGroup>
+
+	<!-- 👇 条件编译不同的 RID -->
+	<Choose>
+		<When Condition="$(RuntimeIdentifier.Contains('-x64'))">
+			<PropertyGroup>
+				<AssemblyName>$(AssemblyName)_x64</AssemblyName>
+			</PropertyGroup>
+			<ItemGroup>
+				<NativeLibrary Include="$(MSBuildThisFileDirectory)..\..\dll\bin\ce-lib64.lib" />
+			</ItemGroup>
+		</When>
+		<When Condition="$(RuntimeIdentifier.Contains('-x86'))">
+			<PropertyGroup>
+				<AssemblyName>$(AssemblyName)_x86</AssemblyName>
+			</PropertyGroup>
+			<ItemGroup>
+				<NativeLibrary Include="$(MSBuildThisFileDirectory)..\..\dll\bin\ce-lib32.lib" />
+			</ItemGroup>
+		</When>
+		<When Condition="$(RuntimeIdentifier.Contains('-arm64'))">
+			<PropertyGroup>
+				<AssemblyName>$(AssemblyName)_arm64</AssemblyName>
+			</PropertyGroup>
+		</When>
+	</Choose>
+
+</Project>

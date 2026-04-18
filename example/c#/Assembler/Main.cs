@@ -1,14 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using CheatEngine;
+﻿using CheatEngine;
+using System;
 using System.Text.RegularExpressions;
+using System.Windows.Forms;
 
 namespace Assembler
 {
@@ -42,19 +35,23 @@ namespace Assembler
 
         private void btnOpenProcess_Click(object sender, EventArgs e)
         {
-            string pid = ltBox.SelectedItem.ToString();
+            var pid = ltBox.SelectedItem?.ToString();
+            if (string.IsNullOrWhiteSpace(pid))
+            {
+                return;
+            }
             pid = pid.Substring(0, pid.IndexOf('-', 0));
             if (!pid.Equals(""))
             {
                 lib.iOpenProcess(pid);
                 MessageBox.Show("Process opened");
             }
-            
+
         }
 
         private void btnInject_Click(object sender, EventArgs e)
         {
-            lib.iAddScript("example",tbScript.Text);
+            lib.iAddScript("example", tbScript.Text);
             lib.iActivateRecord(0, true);
         }
     }

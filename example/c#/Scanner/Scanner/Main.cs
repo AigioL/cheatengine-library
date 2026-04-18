@@ -1,15 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using CheatEngine;
-using System.Text.RegularExpressions;
+﻿using CheatEngine;
+using System;
 using System.Diagnostics;
+using System.Text.RegularExpressions;
+using System.Windows.Forms;
 
 namespace Scanner
 {
@@ -21,12 +14,12 @@ namespace Scanner
         private bool unicode;
         private bool casesensitive;
         private string startscan;
-        private string  endscan;
+        private string endscan;
 
         private const int wm_scandone = 0x8000 + 2;
         protected override void WndProc(ref Message m)
         {
-            int size,i;
+            int size, i;
             if (m.Msg == wm_scandone)
             {
                 lvScanner.VirtualListSize = 0;
@@ -36,9 +29,9 @@ namespace Scanner
 
                 if (varopt == TVariableType.vtString)
                     if (unicode)
-                        lib.iInitFoundList(varopt, size/16, false, false, false, unicode);
+                        lib.iInitFoundList(varopt, size / 16, false, false, false, unicode);
                     else
-                        lib.iInitFoundList(varopt, size/8, false, false, false, unicode);
+                        lib.iInitFoundList(varopt, size / 8, false, false, false, unicode);
                 else
                     lib.iInitFoundList(varopt, size, false, false, false, unicode);
                 if (scanopt != TScanOption.soUnknownValue)
@@ -80,7 +73,11 @@ namespace Scanner
 
         private void btnOpenProcess_Click(object sender, EventArgs e)
         {
-            string pid = ltBox.SelectedItem.ToString();
+            var pid = ltBox.SelectedItem?.ToString();
+            if (string.IsNullOrWhiteSpace(pid))
+            {
+                return;
+            }
             pid = pid.Substring(0, pid.IndexOf('-', 0));
             if (!pid.Equals(""))
             {
@@ -108,34 +105,34 @@ namespace Scanner
 
         private void btnFirstScan_Click(object sender, EventArgs e)
         {
-            TFastScanMethod fastscanmethod ;
-            Tscanregionpreference writable = Tscanregionpreference.scanInclude, 
-                executable = Tscanregionpreference.scanDontCare, copyOnWrite = Tscanregionpreference.scanExclude ;
+            TFastScanMethod fastscanmethod;
+            Tscanregionpreference writable = Tscanregionpreference.scanInclude,
+                executable = Tscanregionpreference.scanDontCare, copyOnWrite = Tscanregionpreference.scanExclude;
             timer1.Enabled = false;
             btnFirstScan.Enabled = false;
 
-            switch(cbWritable.CheckState)
+            switch (cbWritable.CheckState)
             {
-                case CheckState.Unchecked : writable = Tscanregionpreference.scanExclude; break;
-                case CheckState.Checked : writable = Tscanregionpreference.scanInclude; break;
-                case CheckState.Indeterminate : writable = Tscanregionpreference.scanDontCare; break;
+                case CheckState.Unchecked: writable = Tscanregionpreference.scanExclude; break;
+                case CheckState.Checked: writable = Tscanregionpreference.scanInclude; break;
+                case CheckState.Indeterminate: writable = Tscanregionpreference.scanDontCare; break;
             }
 
-            switch(cbExecutable.CheckState)
+            switch (cbExecutable.CheckState)
             {
-                case CheckState.Unchecked : executable = Tscanregionpreference.scanExclude; break;
-                case CheckState.Checked : executable = Tscanregionpreference.scanInclude; break;
-                case CheckState.Indeterminate : executable = Tscanregionpreference.scanDontCare; break;
+                case CheckState.Unchecked: executable = Tscanregionpreference.scanExclude; break;
+                case CheckState.Checked: executable = Tscanregionpreference.scanInclude; break;
+                case CheckState.Indeterminate: executable = Tscanregionpreference.scanDontCare; break;
             }
 
-            switch(cbCopyOnWrite.CheckState)
+            switch (cbCopyOnWrite.CheckState)
             {
-                case CheckState.Unchecked : copyOnWrite = Tscanregionpreference.scanExclude; break;
-                case CheckState.Checked : copyOnWrite = Tscanregionpreference.scanInclude; break;
-                case CheckState.Indeterminate : copyOnWrite = Tscanregionpreference.scanDontCare; break;
+                case CheckState.Unchecked: copyOnWrite = Tscanregionpreference.scanExclude; break;
+                case CheckState.Checked: copyOnWrite = Tscanregionpreference.scanInclude; break;
+                case CheckState.Indeterminate: copyOnWrite = Tscanregionpreference.scanDontCare; break;
             }
 
-            lib.iConfigScanner(writable,executable,copyOnWrite);
+            lib.iConfigScanner(writable, executable, copyOnWrite);
 
             if (cbFastScan.Checked)
             {
@@ -169,20 +166,20 @@ namespace Scanner
 
         private void cbScanType_SelectedIndexChanged(object sender, EventArgs e)
         {
-              switch (cbScanType.SelectedIndex)
-              {
-                  case 0: scanopt = TScanOption.soUnknownValue; break;
-                  case 1: scanopt = TScanOption.soExactValue; break;
-                  case 2:scanopt = TScanOption.soValueBetween;break;
-                  case 3:scanopt = TScanOption.soBiggerThan;break;
-                  case 4:scanopt = TScanOption.soSmallerThan;break;
-                  case 5:scanopt = TScanOption.soIncreasedValue;break;
-                  case 6:scanopt = TScanOption.soIncreasedValueBy;break;
-                  case 7: scanopt = TScanOption.soDecreasedValue;break;
-                  case 8:scanopt = TScanOption.soIncreasedValueBy;break;
-                  case 9:scanopt = TScanOption.soChanged;break;
-                  case 10: scanopt = TScanOption.soUnchanged; break;
-              }
+            switch (cbScanType.SelectedIndex)
+            {
+                case 0: scanopt = TScanOption.soUnknownValue; break;
+                case 1: scanopt = TScanOption.soExactValue; break;
+                case 2: scanopt = TScanOption.soValueBetween; break;
+                case 3: scanopt = TScanOption.soBiggerThan; break;
+                case 4: scanopt = TScanOption.soSmallerThan; break;
+                case 5: scanopt = TScanOption.soIncreasedValue; break;
+                case 6: scanopt = TScanOption.soIncreasedValueBy; break;
+                case 7: scanopt = TScanOption.soDecreasedValue; break;
+                case 8: scanopt = TScanOption.soIncreasedValueBy; break;
+                case 9: scanopt = TScanOption.soChanged; break;
+                case 10: scanopt = TScanOption.soUnchanged; break;
+            }
         }
 
         private void cbValueType_SelectedIndexChanged(object sender, EventArgs e)
@@ -201,10 +198,10 @@ namespace Scanner
 
             switch (varopt)
             {
-                case TVariableType.vtBinary :
-                case TVariableType.vtByte :
-                case TVariableType.vtString : 
-                case TVariableType.vtUnicodeString :
+                case TVariableType.vtBinary:
+                case TVariableType.vtByte:
+                case TVariableType.vtString:
+                case TVariableType.vtUnicodeString:
                 case TVariableType.vtByteArrays: tbAlignment.Text = "1"; break;
                 case TVariableType.vtWord: tbAlignment.Text = "2"; break;
                 default: tbAlignment.Text = "4"; break;
@@ -221,7 +218,7 @@ namespace Scanner
         private void lvScanner_RetrieveVirtualItem(object sender, RetrieveVirtualItemEventArgs e)
         {
             string address, value;
-            try 
+            try
             {
                 ListViewItem lvi = new ListViewItem(); 	// create a listviewitem object
                 lib.iGetAddress(e.ItemIndex, out address, out value);
@@ -234,14 +231,14 @@ namespace Scanner
             catch (Exception ex)
             {
             }
-            
+
         }
 
         private void fmScanner_Load(object sender, EventArgs e)
         {
             cbScanType.SelectedIndex = cbScanType.Items.IndexOf("Exact Value");
             cbValueType.SelectedIndex = cbValueType.Items.IndexOf("4 Bytes");
- 
+
         }
 
         private void btnNextScan_Click(object sender, EventArgs e)

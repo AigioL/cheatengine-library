@@ -46,6 +46,9 @@ function getaddress(S: string):ptrUint; //for old code
 
 implementation
 
+resourcestring
+  rsAPThisIsNotAValidAddress = 'This is not a valid address';
+
 procedure TAddressParser.seperator;
 //sets the seperator
 begin
@@ -64,7 +67,7 @@ end;
 
 procedure TAddressParser.value;
 //copy all characters of 0 to 9 in tempstr
-var tmp: dword;
+var tmp: ptruint;
     strp: pchar;
     count: integer;
 begin
@@ -83,17 +86,19 @@ begin
 end;
 
 procedure TAddressParser.aregister;
-var tmp: dword;
+var tmp: ptruint;
     tmps: string;
     c: Pcontext;
 begin
 
   tmp:=0;
+  c:=SpecialContext;
   tmps:=copy(str,ch,3);
-  if SpecialContext<>nil then
-    c:=SpecialContext;
 //  else
 //    c:=@memorybrowser.lastdebugcontext;
+
+  if c=nil then
+    raise exception.Create(rsAPThisIsNotAValidAddress);
 
   if tmps='EAX' then tmp:=c.{$ifdef cpu64}rax{$else}eax{$endif} else
   if tmps='EBX' then tmp:=c.{$ifdef cpu64}rbx{$else}ebx{$endif} else

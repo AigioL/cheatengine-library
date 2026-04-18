@@ -4,7 +4,7 @@ unit byteinterpreter;
 
 interface
 
-uses windows, LCLIntf, sysutils, symbolhandler, CEFuncProc, NewKernelHandler, math, CustomTypeHandler;
+uses windows, LCLIntf, sysutils, symbolhandler, CEFuncProc, NewKernelHandler, math, CustomTypeHandler, LazUTF8;
 
 type TAutoGuessEvent=function (address: ptruint; originalVariableType: TVariableType): TVariableType of object;
 
@@ -79,7 +79,12 @@ begin
         if hexadecimal then
           value:='$'+value;
 
-        v:=StrToQWordEx(value);
+        if (variabletype=vtCustom) and (customtype<>nil) and customtype.scriptUsesFloat then
+        begin
+          s:=StrToFloat(value);
+        end
+        else
+          v:=StrToQWordEx(value);
       end;
     end;
 
@@ -88,6 +93,13 @@ begin
       vtWord: WriteProcessMemory(processhandle, pointer(address), @v, 2, x);
       vtDWord: WriteProcessMemory(processhandle, pointer(address), @v, 4, x);
       vtQWord: WriteProcessMemory(processhandle, pointer(address), @v, 8, x);
+      vtPointer:
+      begin
+        if processhandler.is64bit then
+          WriteProcessMemory(processhandle, pointer(address), @v, 8, x)
+        else
+          WriteProcessMemory(processhandle, pointer(address), @v, 4, x);
+      end;
       vtSingle: WriteProcessMemory(processhandle, pointer(address), @s, 4, x);
       vtDouble: WriteProcessMemory(processhandle, pointer(address), @d, 8, x);
 
@@ -100,19 +112,22 @@ begin
 
       vtCustom:
       begin
-        getmem(ba, customtype.bytesize);
-        try
-          if ReadProcessMemory(processhandle, pointer(address), ba, customtype.bytesize, x) then
-          begin
-            if customtype.scriptUsesFloat then
-              customtype.ConvertFloatToData(s, ba)
-            else
-              customtype.ConvertIntegerToData(v, ba);
+        if customtype<>nil then
+        begin
+          getmem(ba, customtype.bytesize);
+          try
+            if ReadProcessMemory(processhandle, pointer(address), ba, customtype.bytesize, x) then
+            begin
+              if customtype.scriptUsesFloat then
+                customtype.ConvertFloatToData(s, ba)
+              else
+                customtype.ConvertIntegerToData(v, ba);
 
-            WriteProcessMemory(processhandle, pointer(address), ba, customtype.bytesize, x);
+              WriteProcessMemory(processhandle, pointer(address), ba, customtype.bytesize, x);
+            end;
+          finally
+            freemem(ba);
           end;
-        finally
-          freemem(ba);
         end;
       end;
     end;
@@ -185,6 +200,14 @@ begin
       end;
     end;
 
+    vtPointer:
+    begin
+      if processhandler.is64bit then
+        result:=symhandler.getNameFromAddress(PQWord(@buf[0])^)
+      else
+        result:=symhandler.getNameFromAddress(PDWord(@buf[0])^);
+    end;
+
     vtSingle:
     begin
       if showashexadecimal then
@@ -204,9 +227,13 @@ begin
     vtString:
     begin
       getmem(s, bytesize+1);
-      CopyMemory(s, buf, bytesize);
-      s[bytesize]:=#0;
-      result:=s;
+      try
+        CopyMemory(s, buf, bytesize);
+        s[bytesize]:=#0;
+        result:=s;
+      finally
+        freemem(s);
+      end;
     end;
 
     vtUnicodeString:
@@ -217,7 +244,7 @@ begin
       try
         pbytearray(ws)[bytesize+1]:=0;
         pbytearray(ws)[bytesize]:=0;
-        result:=ws;
+        result:=UTF16ToUTF8(ws);
       finally
         freemem(ws);
       end;
@@ -291,6 +318,12 @@ begin
     vtQword:
     begin
       if ReadProcessMemory(processhandle,pointer(address),@buf[0],8,x) then
+        result:=readAndParsePointer(@buf[0], variabletype, customtype, showashexadecimal, showAsSigned, bytesize);
+    end;
+
+    vtPointer:
+    begin
+      if ReadProcessMemory(processhandle,pointer(address),@buf[0],processhandler.pointersize,x) then
         result:=readAndParsePointer(@buf[0], variabletype, customtype, showashexadecimal, showAsSigned, bytesize);
     end;
 
@@ -398,7 +431,7 @@ begin
         tempbuf[size]:=0;
         tempbuf[size+1]:=0;
         tr:=PWideChar(tempbuf);
-        result:=tr;
+        result:=UTF16ToUTF8(tr);
 
       finally
         freemem(tempbuf);

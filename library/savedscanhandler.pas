@@ -79,6 +79,7 @@ type TSavedScanHandler = class
     SavedScantype: tSavedScantype;
 
     maxaddresslistcount: integer;
+    currentaddresslistcount: integer;
     addresslistmemory: pointer;  //can be an array of regions, an array of pointers or an array of tbitaddress definitions
     addresslistoffset: qword; //offset into the savedscanaddressFS file
     SavedScanmemory: pointer;
@@ -98,7 +99,10 @@ type TSavedScanHandler = class
     end;
 
     currentRegion: integer;
+    currentSubRegion: qword;
     Deinitialized: boolean; //if set do not lookup pointers
+    reinitializeLater: boolean;
+    reinitializeTimeout: qword;
     procedure cleanup;
     function loadIfNotLoadedRegion(p: pointer): pointer;
 
@@ -107,6 +111,7 @@ type TSavedScanHandler = class
     procedure loadCurrentRegionMemory;
     procedure InitializeScanHandler;
   public
+    lastFail: integer;
     AllowRandomAccess: boolean; //set this if you wish to allow random access through the list. (EXTREMELY INEFFICIENT IF IT HAPPENS, addresslist purposes only)
     AllowNotFound: boolean; //set this if you wish to return nil instead of an exception if the address can't be found in the list
     function getpointertoaddress(address:ptruint;valuetype:TVariableType; ct: TCustomType; recallifneeded: boolean=true): pointer;
@@ -115,7 +120,7 @@ type TSavedScanHandler = class
     procedure reinitialize;
 
 
-    constructor create(scandir: string; savedresultsname: string);
+    constructor create(scandir: string; savedresultsname: string; reinitializeLaterOnFailure: boolean=false);
     destructor destroy; override;
 end;
 
@@ -177,9 +182,9 @@ procedure TSavedScanHandler.loadCurrentRegionMemory;
 var pm: ^TArrMemoryRegion;
 begin
   pm:=addresslistmemory;
-  SavedScanmemoryfs.position:=ptruint(pm[currentRegion].startaddress);
+  SavedScanmemoryfs.position:=ptruint(pm[currentRegion].startaddress)+currentSubRegion;
 
-  savedscanmemoryfs.readbuffer(SavedScanmemory^, pm[currentRegion].memorysize);
+  savedscanmemoryfs.readbuffer(SavedScanmemory^, integer(min(qword(buffersize+64), qword(pm[currentRegion].memorysize-currentSubRegion))));
 
 end;
 
@@ -189,18 +194,19 @@ Loads the savedscanmemory block for the current adddresslist block
 }
 var addressliststart: qword;
     index: qword;
-    i: integer;
     varsize: integer;
 begin
+  varsize:=1;
+
   if valuetype<>vtall then
   begin
     //find the start of this region
-    addressliststart:=(savedscanaddressfs.Position)-maxaddresslistcount*sizeof(ptruint);
+    addressliststart:=(savedscanaddressfs.Position)-currentaddresslistcount*sizeof(ptruint);
     index:=(addressliststart-7) div sizeof(ptruint);
   end
   else
   begin
-    addressliststart:=(savedscanaddressfs.Position)-maxaddresslistcount*sizeof(TBitAddress);
+    addressliststart:=(savedscanaddressfs.Position)-currentaddresslistcount*sizeof(TBitAddress);
     index:=(addressliststart-7) div sizeof(TBitAddress);
   end;
 
@@ -223,7 +229,7 @@ begin
 
 
   SavedScanmemoryFS.Position:=index * varsize;
-  SavedScanmemoryFS.ReadBuffer(SavedScanmemory^, maxaddresslistcount*varsize);
+  SavedScanmemoryFS.ReadBuffer(SavedScanmemory^, currentaddresslistcount*varsize);
 end;
 
 procedure TSavedScanHandler.LoadNextChunk(valuetype: TVariableType);
@@ -236,27 +242,27 @@ begin
   if valuetype<>vtall then
   begin
 
-    maxaddresslistcount:=min(maxaddresslistcount, (savedscanaddressfs.size-savedscanaddressfs.Position) div sizeof(ptruint)); //limit to the addresslist file size
+    currentaddresslistcount:=min(maxaddresslistcount, (savedscanaddressfs.size-savedscanaddressfs.Position) div sizeof(ptruint)); //limit to the addresslist file size
 
     if addresslistmemory=nil then
       getmem(addresslistmemory, maxaddresslistcount*sizeof(ptruint));
 
     //load the results
-    savedscanaddressfs.ReadBuffer(addresslistmemory^, maxaddresslistcount*sizeof(ptruint));
+    savedscanaddressfs.ReadBuffer(addresslistmemory^, currentaddresslistcount*sizeof(ptruint));
   end
   else
   begin
-    maxaddresslistcount:=min(maxaddresslistcount, (savedscanaddressfs.size-savedscanaddressfs.Position) div sizeof(TBitAddress)); //limit to the addresslist file size
+    currentaddresslistcount:=min(maxaddresslistcount, (savedscanaddressfs.size-savedscanaddressfs.Position) div sizeof(TBitAddress)); //limit to the addresslist file size
 
     if addresslistmemory=nil then
       getmem(addresslistmemory, maxaddresslistcount*sizeof(TBitAddress));
 
-    savedscanaddressfs.ReadBuffer(addresslistmemory^, maxaddresslistcount*sizeof(TBitAddress));
+    savedscanaddressfs.ReadBuffer(addresslistmemory^, currentaddresslistcount*sizeof(TBitAddress));
   end;
 
-  if maxaddresslistcount=0 then
+  if currentaddresslistcount=0 then
   begin
-    raise exception.create(rsMaxaddresslistcountIs0MeansTheAddresslistIsBad);
+    raise exception.create(rsMaxaddresslistcountIs0MeansTheAddresslistIsBad+' (savedscanaddressfs.size='+inttostr(savedscanaddressfs.size)+')');
   end;
 
   LastAddressAccessed.index:=0; //reset the index
@@ -280,8 +286,30 @@ var i,j: integer;
     pivot: integer;
 begin
   result:=nil;
+  lastFail:=0;
 
-  if Deinitialized then exit;
+  if Deinitialized then
+  begin
+    if reinitializeLater and (GetTickCount64>reinitializeTimeout) then
+    begin
+      try
+        reinitialize;
+        reinitializeLater:=false;
+        Deinitialized:=false;
+      except
+        Deinitialized:=true;
+        reinitializeLater:=true;
+        reinitializeTimeout:=GetTickCount64+1000;
+        lastFail:=1;
+        exit;
+      end;
+    end
+    else
+    begin
+      lastFail:=1;
+      exit;
+    end;
+  end;
 
   if AllowRandomAccess then //no optimization if random access is used
   begin
@@ -301,15 +329,20 @@ begin
 
     pm:=addresslistmemory;
 
-    if AllowRandomAccess and (currentregion>=0) and (address<pm[currentregion].baseaddress) then //out of order access. Start from scratch
+    if AllowRandomAccess and (currentregion>=0) and (address<pm[currentregion].baseaddress+currentSubRegion) then //out of order access. Start from scratch
+    begin
       currentRegion:=-1;
+      currentSubRegion:=0;
+    end;
 
 
     //if no region is set or the current region does not fall in the current list
-    if (currentRegion=-1) or (address>pm[currentregion].baseaddress+pm[currentregion].memorysize) then
+    if (currentRegion=-1) or (address>pm[currentregion].baseaddress+pm[currentregion].memorysize) or (address>pm[currentregion].baseaddress+currentSubRegion+buffersize) then
     begin
       //find the startregion, becaue it's a sequential read just go through it in order
-      inc(currentRegion);
+      if (currentRegion=-1) or (address>pm[currentregion].baseaddress+pm[currentregion].memorysize) then
+        inc(currentRegion);
+
       while (address>pm[currentregion].baseaddress+pm[currentregion].memorysize) and (currentregion<maxnumberofregions) do
         inc(currentRegion);
 
@@ -318,16 +351,20 @@ begin
         if AllowNotFound = false then
           raise exception.create(Format(rsFailureInFindingInThePreviousScanResults, [inttohex(address, 8)]))
         else
+        begin
+          lastFail:=2;
           exit;
+        end;
       end;
 
+      currentSubRegion:=address-pm[currentregion].baseaddress;
       loadCurrentRegionMemory;
     end;
 
 
 
 
-    result:=pointer(ptruint(savedscanmemory)+(address-pm[currentregion].baseaddress));
+    result:=pointer(ptruint(savedscanmemory)+(address-(pm[currentregion].baseaddress+currentSubRegion)));
     exit;
 
   end
@@ -400,25 +437,50 @@ begin
         if AllowRandomAccess then
         begin
           //random access allowed. Start all over
-          if recallifneeded=false then exit; //already recalled once and it seems to have failed
+          if recallifneeded=false then
+          begin
+            lastFail:=3;
+            exit; //already recalled once and it seems to have failed
+          end;
 
           InitializeScanHandler;
-          result:=getpointertoaddress(address, valuetype, ct, false);
+          exit(getpointertoaddress(address, valuetype, ct, false));
         end
         else
           raise exception.create(rsInvalidOrderOfCallingGetpointertoaddress);
       end;
 
-      if pa[maxaddresslistcount-1]<address then
+      if pa[currentaddresslistcount-1]<address then
       begin
-        while pa[maxaddresslistcount-1]<address do //load in the next chunk
-          LoadNextChunk(valuetype);
+        while pa[currentaddresslistcount-1]<address do //load in the next chunk
+        begin
+          try
+            LoadNextChunk(valuetype);
+          except
+            on e: exception do
+            begin
+              if AllowRandomAccess then
+              begin
+                if recallifneeded=false then
+                begin
+                  lastFail:=4;
+                  exit;
+                end;
+
+                InitializeScanHandler;
+                exit(getpointertoaddress(address, valuetype, ct, false));
+              end
+              else
+                raise exception.create(e.message);
+            end;
+          end;
+        end;
 
         LoadMemoryForCurrentChunk(valuetype, ct);
       end;
 
       //we now have an addresslist and memory region and we know that the address we need is in here
-      j:=maxaddresslistcount;
+      j:=currentaddresslistcount;
 
       //the list is sorted so do a quickscan
 
@@ -474,25 +536,50 @@ begin
         if AllowRandomAccess then
         begin
           //random access allowed. Start all over
-          if recallifneeded=false then exit; //already recalled once and it seems to have failed
+          if recallifneeded=false then
+          begin
+            lastFail:=5;
+            exit; //already recalled once and it seems to have failed
+          end;
 
           InitializeScanHandler;
-          result:=getpointertoaddress(address, valuetype, ct, false);
+          exit(getpointertoaddress(address, valuetype, ct, false));
         end
         else
           raise exception.create(rsInvalidOrderOfCallingGetpointertoaddress);
       end;
 
-      if pab[maxaddresslistcount-1].address<address then
+      if pab[currentaddresslistcount-1].address<address then
       begin
-        while pab[maxaddresslistcount-1].address<address do //load in the next chunk
-          LoadNextChunk(valuetype);
+        while pab[currentaddresslistcount-1].address<address do //load in the next chunk
+        begin
+          try
+            LoadNextChunk(valuetype);
+          except
+            on e: exception do
+            begin
+              if AllowRandomAccess then
+              begin
+                if recallifneeded=false then
+                begin
+                  lastFail:=6;
+                  exit;
+                end;
+
+                InitializeScanHandler;
+                exit(getpointertoaddress(address, valuetype, ct, false));
+              end
+              else
+                raise exception.create(e.message);
+            end;
+          end;
+        end;
 
         LoadMemoryForCurrentChunk(valuetype, ct);
       end;
 
       //we now have an addresslist and memory region and we know that the address we need is in here
-      j:=maxaddresslistcount;
+      j:=currentaddresslistcount;
 
 
       //the list is sorted so do a quickscan
@@ -566,19 +653,13 @@ begin
       SavedScanaddressFS.ReadBuffer(addresslistmemory^, (SavedScanaddressFS.Size-7));
 
 
-      //find the max region
+      //find the max region and split up into bitesize chunks
       pm:=addresslistmemory;
 
       p:=0;
       for i:=0 to maxnumberofregions-1 do
       begin
-        if pm[i].memorysize>maxregionsize then
-        begin
-          if pm[i].memorysize>high(ptrUint) then
-            maxregionsize:=high(ptrUint)
-          else
-            maxregionsize:=pm[i].memorysize;
-        end;
+        maxregionsize:=max(maxregionsize, ptruint(min(qword(buffersize+64+MaxCustomTypeSize), qword(pm[i].memorysize))));
 
         pm[i].startaddress:=pointer(p); //set the offset in the file (if it wasn't set already)
         inc(p, pm[i].MemorySize);
@@ -586,6 +667,7 @@ begin
 
 
       currentRegion:=-1;
+      currentSubRegion:=0;
     end
     else
     begin
@@ -600,10 +682,13 @@ begin
 
     try
       SavedScanmemoryFS:=Tfilestream.Create(scandir+'MEMORY.'+savedresultsname,fmOpenRead or fmsharedenynone);
-      getmem(SavedScanmemory, maxregionsize);
+      getmem(SavedScanmemory, maxregionsize+512);
     except
       raise exception.Create(rsNoFirstScanDataFilesFound);
     end;
+
+    currentaddresslistcount:=0;
+    Deinitialized:=false;
 
 
   except
@@ -616,14 +701,31 @@ begin
  end;
 end;
 
-constructor TSavedScanHandler.create(scandir: string; savedresultsname: string);
+constructor TSavedScanHandler.create(scandir: string; savedresultsname: string; reinitializeLaterOnFailure: boolean=false);
 begin
+  inherited Create;
+
   if savedresultsname='' then
     savedresultsname:='TMP';
 
   self.scandir:=scandir;
   self.savedresultsname:=savedresultsname;
-  InitializeScanHandler;
+
+  try
+    InitializeScanHandler;
+  except
+    on e: exception do
+    begin
+      if reinitializeLaterOnFailure then
+      begin
+        Deinitialized:=true;
+        reinitializeLater:=true;
+        reinitializeTimeout:=GetTickCount64+1000;
+      end
+      else
+        raise;
+    end;
+  end;
 end;
 
 destructor TSavedScanHandler.destroy;
@@ -649,12 +751,19 @@ begin
 
   freeandnil(SavedScanaddressFS);
   freeandnil(SavedScanmemoryFS);
+
+  currentaddresslistcount:=0;
+  currentSubRegion:=0;
+  currentRegion:=-1;
+  LastAddressAccessed.address:=0;
+  LastAddressAccessed.index:=0;
 end;
 
 procedure TSavedScanHandler.deinitialize;
 begin
   cleanup;
   Deinitialized:=true;
+  reinitializeLater:=false;
 end;
 
 procedure TSavedScanHandler.reinitialize;

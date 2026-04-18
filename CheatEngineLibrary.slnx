@@ -1,6 +1,16 @@
 <Solution>
-  <Project Path="example/c#/Assembler/Assembler.csproj" Id="c4fbd470-bad2-4283-a51f-443f99e39e59" />
-  <Project Path="example/c#/Scanner/Scanner/Scanner.csproj" Id="5483fa3b-d228-48ff-b82b-4d87a9753f78">
-    <Platform Project="x64" />
-  </Project>
+  <Folder Name="/NETFX/">
+    <Project Path="example/c#/Assembler/Assembler.csproj" Id="c4fbd470-bad2-4283-a51f-443f99e39e59" />
+    <Project Path="example/c#/Scanner/Scanner/Scanner.csproj" Id="5483fa3b-d228-48ff-b82b-4d87a9753f78">
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+  <Folder Name="/解决方案项/">
+    <File Path="README.md" />
+    <File Path="src/Directory.Build.props" />
+    <File Path="src/Directory.Build.targets" />
+  </Folder>
+  <Project Path="src/CheatEngineLibrary.Assembler/CheatEngineLibrary.Assembler.csproj" Id="76cfa752-0173-4e62-be75-113b4edc43bb" />
+  <Project Path="src/CheatEngineLibrary.Scanner/CheatEngineLibrary.Scanner.csproj" Id="9a0cb87b-4306-4290-83ba-4c5111e4f322" />
+  <Project Path="src/CheatEngineLibrary/CheatEngineLibrary.csproj" />
 </Solution>

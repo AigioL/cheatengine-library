@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<UseWindowsForms>true</UseWindowsForms>
+		<RootNamespace>Scanner</RootNamespace>
+		<AssemblyName>$(RootNamespace)</AssemblyName>
+		<ApplicationManifest>$(MSBuildThisFileDirectory)..\..\example\c#\Scanner\Scanner\Properties\app.manifest</ApplicationManifest>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<Compile Include="$(MSBuildThisFileDirectory)..\AssemblyInfo.Attribute.cs">
+			<LinkBase>Properties</LinkBase>
+		</Compile>
+		<Compile Include="$(MSBuildThisFileDirectory)..\..\example\c#\Scanner\Scanner\*.cs">
+			<LinkBase></LinkBase>
+		</Compile>
+		<EmbeddedResource Include="$(MSBuildThisFileDirectory)..\..\example\c#\Scanner\Scanner\*.resx">
+			<LinkBase></LinkBase>
+		</EmbeddedResource>
+		<Compile Include="$(MSBuildThisFileDirectory)..\..\wrapper\c#\Connector2.cs">
+			<LinkBase></LinkBase>
+		</Compile>
+		<None Condition="Exists('$(MSBuildThisFileDirectory)..\..\dll\bin\ce-lib32.dll')" Include="$(MSBuildThisFileDirectory)..\..\dll\bin\ce-lib32.dll">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Condition="Exists('$(MSBuildThisFileDirectory)..\..\dll\bin\ce-lib64.dll')" Include="$(MSBuildThisFileDirectory)..\..\dll\bin\ce-lib64.dll">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
+</Project>

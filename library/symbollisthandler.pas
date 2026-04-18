@@ -293,6 +293,7 @@ end;
 procedure TSymbolListHandler.clear;
 var x: TAvgLvlTreeNode;
   d:PCESymbolInfo;
+  i: integer;
 begin
   cs.Beginwrite;
   try
@@ -321,6 +322,14 @@ begin
 
     if StringToAddress<>nil then
       StringToAddress.Clear;
+
+    if ExtraSymbolDataList<>nil then
+    begin
+      for i:=0 to ExtraSymbolDataList.count-1 do
+        ExtraSymbolDataList[i].free;
+
+      ExtraSymbolDataList.Clear;
+    end;
 
   finally
     cs.endwrite;

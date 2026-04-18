@@ -221,7 +221,7 @@ begin
       addresspos:=7+sizeof(sizeof(TBitAddress))*i
     else
     if vartype =vtGrouped then
-      addresspos:=7+sizeof(dword)+groupElementSize
+      addresspos:=7+sizeof(dword)+groupElementSize*i
     else
       addresspos:=7+sizeof(sizeof(ptruint))*i;
 
@@ -455,7 +455,7 @@ var last: integer;
     n: TAvgLvlTreeNode;
     lr: TLookupRecord;
 begin
-  result:=-1;
+  result:=qword(-1);
   if lookupTree=nil then
   begin
     lookuptree:=TAvgLvlTree.Create(AddressLookupCompare);
@@ -500,7 +500,7 @@ begin
   extra:=0;
   result:=0;
 
-  if i=-1 then exit;
+  if i=qword(-1) then exit;
   if i>=foundlist.Items.Count then exit;
 
   if addressfile=nil then exit; //during a scan
@@ -574,19 +574,18 @@ var j,k,l: integer;
 
     groupdata: PGroupAddress;
 begin
-  if i=-1 then exit;
-
-
-
   extra:=0;
   value:='';
   result:=0;
   groupdata:=nil;
 
+  if i=qword(-1) then exit;
+
   currentaddress:=GetAddressOnly(i,extra, @groupdata);
 
   result:=currentaddress;
   j:=i-addresslistfirst;
+  if j<0 then exit(0);
 
   if valuelist[j]='' then
   begin
@@ -837,6 +836,7 @@ end;
 
 procedure TFoundlist.Deinitialize;
 begin
+  fcount:=0;
   clear;
   if addressfile<>nil then
     freeandnil(addressfile);

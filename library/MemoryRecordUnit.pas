@@ -7,7 +7,7 @@ interface
 uses
   Windows, forms, graphics, Classes, SysUtils, controls, stdctrls, comctrls,symbolhandler,
   cefuncproc,newkernelhandler, autoassembler, hotkeyhandler, dom, XMLRead,XMLWrite,
-  customtypehandler, fileutil, LCLProc;
+  customtypehandler, fileutil, LCLProc, LazUTF8;
 
 type TMemrecHotkeyAction=(mrhToggleActivation, mrhToggleActivationAllowIncrease, mrhToggleActivationAllowDecrease, mrhActivate, mrhDeactivate, mrhSetValue, mrhIncreaseValue, mrhDecreaseValue);
 
@@ -86,6 +86,7 @@ type
     fVisible: boolean;
 
     fVarType : TVariableType;
+    fIsReadableAddress: boolean;
 
     couldnotinterpretaddress: boolean; //set when the address interpetation has failed since last eval
 
@@ -184,6 +185,8 @@ type
     property ID: integer read fID write setID;
     property Color: TColor read fColor write setColor;
     property AddressString: string read getAddressString;
+    property IsReadableAddress: boolean read fIsReadableAddress;
+    property IsReadable: boolean read fIsReadableAddress;
     property Active: boolean read fActive write setActive;
     property VarType: TVariableType read fVarType write setVarType;
     property CustomTypeName: string read fCustomTypeName write setCustomTypeName;
@@ -732,7 +735,6 @@ function TMemoryRecord.ReinterpretAddress(forceremovalofoldaddress: boolean=fals
 var
   a: ptrUint;
   s: string;
-  i: integer;
 begin
   if forceremovalofoldaddress then
   begin
@@ -750,6 +752,8 @@ begin
     fIsOffset:=(s<>'') and (s[1] in ['+','-']);
     baseaddress:=a;
   end;
+
+  GetRealAddress;
 end;
 
 procedure TMemoryRecord.ApplyFreeze;
@@ -875,6 +879,7 @@ var
   c: PChar absolute buf;
 
   i: integer;
+  e: boolean;
 begin
 
 
@@ -899,6 +904,7 @@ begin
 
   if ReadProcessMemory(processhandle, pointer(realAddress), buf, bufsize,br) then
   begin
+    fIsReadableAddress:=true;
     case vartype of
       vtCustom:
       begin
@@ -927,7 +933,7 @@ begin
         if Extra.stringData.unicode then
         begin
           pba[bufsize-2]:=0;
-          result:={ansitoutf8}(wc);
+          result:=UTF16ToUTF8(wc);
         end
         else
           result:={ansitoutf8}(c);
@@ -949,7 +955,17 @@ begin
     end;
   end
   else
+  begin
     result:='??';
+
+    fIsReadableAddress:=false;
+    if baseaddress<>0 then
+    begin
+      baseaddress:=symhandler.getAddressFromName(interpretableaddress,false, e);
+      if e then
+        baseaddress:=0;
+    end;
+  end;
 
   freemem(buf);
 end;

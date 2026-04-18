@@ -1085,7 +1085,8 @@ end;
 procedure DBKFileAsMemory(filename:string); overload;
 begin
   filehandle:=CreateFile(pchar(filename),GENERIC_READ	or GENERIC_WRITE,FILE_SHARE_READ or FILE_SHARE_WRITE,nil,OPEN_EXISTING,FILE_FLAG_RANDOM_ACCESS,0);
-  if filehandle=0 then raise exception.create(Format(rsCouldnTBeOpened, [filename]));
+  if (filehandle=0) or (filehandle=INVALID_HANDLE_VALUE) then
+    raise exception.create(Format(rsCouldnTBeOpened, [filename]));
   DBKFileAsMemory;
 end;
 

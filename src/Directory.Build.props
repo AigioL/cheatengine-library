@@ -1,0 +1,39 @@
+<Project>
+
+	<!-- 👇 全局 Property 配置 -->
+	<PropertyGroup>
+		<ImplicitUsings>true</ImplicitUsings>
+		<Deterministic>true</Deterministic>
+		<LangVersion>preview</LangVersion>
+		<Nullable>enable</Nullable>
+		<UseArtifactsOutput>true</UseArtifactsOutput>
+		<SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+	</PropertyGroup>
+
+	<!-- 👇 阻止 error NETSDK1175: 启用剪裁时，不支持或不推荐使用 Windows 窗体 -->
+	<PropertyGroup>
+		<_SuppressWinFormsTrimError>true</_SuppressWinFormsTrimError>
+		<_SuppressWpfTrimError>true</_SuppressWpfTrimError>
+	</PropertyGroup>
+
+	<!-- 👇 条件编译不同的 RID -->
+	<Choose>
+		<When Condition="$(RuntimeIdentifier.Contains('-x64'))">
+			<PropertyGroup>
+				<DefineConstants>$(DefineConstants);TARGET_X64</DefineConstants>
+			</PropertyGroup>
+		</When>
+		<When Condition="$(RuntimeIdentifier.Contains('-x86'))">
+			<PropertyGroup>
+				<DefineConstants>$(DefineConstants);TARGET_X86</DefineConstants>
+			</PropertyGroup>
+		</When>
+		<When Condition="$(RuntimeIdentifier.Contains('-arm64'))">
+			<PropertyGroup>
+				<DefineConstants>$(DefineConstants);TARGET_ARM64</DefineConstants>
+			</PropertyGroup>
+		</When>
+	</Choose>
+
+</Project>

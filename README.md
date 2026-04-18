@@ -2,19 +2,19 @@ cheatengine-library
 ===================
 @contact : [p-yohann][@][hotmail.fr]
 
-Cheat Engine Library is the first open source library based on Cheat Engine a powerfull memory editing software. You may found the original software here http://cheatengine.org/
+Cheat Engine Library 是首个基于 Cheat Engine 的开源库。Cheat Engine 是一款功能强大的内存编辑软件，原始软件可在 http://cheatengine.org/ 获取。
 
-The first goal of this project is to give you the ability to make your own software with advanced features like auto assemble, dll injections, memory scanner etc. As you know, Cheat Engine doesn't provide any library and it could be very frustrating for a developer. This library is supported for both platform (x86/x64) and it is usable with popular programming languages (c#, c++, delphi).
+这个项目的首要目标，是让你能够构建自己的软件，并使用 Auto Assemble、DLL 注入、内存扫描等高级功能。正如你所知，Cheat Engine 本身并没有提供现成的库，这对开发者来说会很不方便。这个库同时支持 x86 和 x64 平台，并且可以配合常见编程语言使用，例如 c#、c++ 和 delphi。
 
 ![scanner_c](https://cloud.githubusercontent.com/assets/5822286/3718740/268557f8-163a-11e4-8585-ad3105b28859.png)
 
-## Features :
-* **manage a virtual cheat engine table**
- * add an address manually
- * add an autoassemble script
- * activate, desactivate, freeze and unfreeze any address or script
-* **inject auto assemble script**
- * **supported symbols :**
+## 功能特性
+* **管理虚拟 Cheat Engine 表**
+ * 手动添加地址
+ * 添加 Auto Assemble 脚本
+ * 激活、停用、冻结和取消冻结任意地址或脚本
+* **注入 Auto Assemble 脚本**
+ * **支持的符号：**
     * ALLOC
     * DEALLOC
     * LABEL
@@ -25,64 +25,48 @@ The first goal of this project is to give you the ability to make your own softw
     * READMEM
     * LOADLIBRARY
     * CREATETHREAD
-* **Scan the memory to find specific addresses**
- * **Scan type :**
-    * Exact value
-    * Smaller than
-    * Bigger than
-    * Value between
-    * Unknown initial value
-    * Increase value
-    * Increase value by
-    * Decrease value
-    * Decrease value by
-    * Changed value
-    * Unchanged value
- * **Value type :**
-    * Binary
-    * Byte
-    * 2 Bytes
-    * 4 Bytes
-    * 8 Bytes
-    * Float
-    * Double
-    * String
-  * **Memory scan options :**
-    * Start address, Stop address
-    * Writable, Executable, CopyOnWrite
-    * Fast scan, Align and Not Align
-    * Unicode, Case Sensitive
+* **扫描内存以查找特定地址**
+ * **扫描类型：**
+    * 精确值
+    * 小于
+    * 大于
+    * 介于两值之间
+    * 未知初始值
+    * 数值增加
+    * 数值增加指定值
+    * 数值减少
+    * 数值减少指定值
+    * 已变化
+    * 未变化
+ * **值类型：**
+    * 二进制
+    * 字节
+    * 2 字节
+    * 4 字节
+    * 8 字节
+    * 单精度浮点
+    * 双精度浮点
+    * 字符串
+  * **内存扫描选项：**
+    * 起始地址、结束地址
+    * 可写、可执行、写时复制
+    * 快速扫描、按对齐与非对齐
+    * Unicode、区分大小写
 
-## What's new ?
-**Please refer to the CHANGELOG file to get informations about the last release**
+## 最近更新
+**最新版本信息请参阅 CHANGELOG 文件**
 
-## C# port
+## 我该从哪里开始？
 
-The repository now also contains a .NET 10 C# port of the Pascal units under `library/` in the `library_csharp/` folder.
+1. 如果你需要一个开箱即用的方案，请下载：
+ * 一个示例项目（delphi、c# 或 c++）
+ * 一个用于与该库通信的包装层
+ * 发布页提供的库文件：https://github.com/AigioL/cheatengine-library/releases
 
-### C# port details
-* Target framework: `net10.0-windows`
-* NativeAOT and trimming analyzers are enabled
-* Win32 interop is generated through `Microsoft.Windows.CsWin32`
-* The port keeps the original unit coverage from `library/` and exposes the migrated code as the `CheatEngine.Library` assembly
+2. 如果你需要自行构建方案：
+ * 下载 Lazarus 64 位或 Lazarus 32 位
+ * 复制 library 和 dll 目录
 
-### Build the C# library
-1. Install the .NET 10 SDK
-2. Run `dotnet build library_csharp/CheatEngine.Library.csproj`
+## 是否提供文档？
 
-The resulting assembly is generated under `library_csharp/bin/Debug/net10.0-windows/`.
-
-## Where should I begin ?
-
-1. If you need an turnkey solution you should download :
- * one example (delphi, c#, or c++)
- * a wrapper for communicating with the library
- * the library available in the release page : https://github.com/fenix01/cheatengine-library/releases
-
-2. If you need your own solution :
- * Download Lazarus 64 bits or Lazarus 32 bits
- * Copy the library and the dll directory
-
-## Do you provide a documentation ?
-
-Yes, I made a description of the cheat engine library apis. Follow this link https://github.com/fenix01/cheatengine-library/wiki/Guideline
+有，我已经编写了 cheat engine library API 的说明文档。请访问这个链接：https://github.com/fenix01/cheatengine-library/wiki/Guideline
