@@ -37,6 +37,7 @@ type TMemRecByteData=record
 type TMemRecAutoAssemblerData=record
       script: tstringlist;
       allocs: TCEAllocArray;
+  exceptions: TCEExceptionListArray;
       registeredsymbols: TStringlist;
     end;
 
@@ -137,8 +138,6 @@ type
 
     isSelected: boolean; //lazarus bypass. Because lazarus does not implement multiselect I have to keep track of which entries are selected
 
-    showAsHex: boolean;
-
     //free for editing by user:
     autoAssembleWindow: TForm; //window storage for an auto assembler editor window
 
@@ -162,7 +161,6 @@ type
     function getBaseAddress: ptrUint; //return the base address, if offset, the calculated address
     procedure RefreshCustomType;
     function ReinterpretAddress(forceremovalofoldaddress: boolean=false): boolean;
-    property Value: string read GetValue write SetValue;
     property bytesize: integer read getByteSize;
 
     function hasHotkeys: boolean;
@@ -195,7 +193,6 @@ type
     property ShowAsHex: boolean read fShowAsHex write setShowAsHex;
     property ShowAsSigned: boolean read getShowAsSigned write setShowAsSigned;
     property Options: TMemrecOptions read fOptions write setOptions;
-    property CustomTypeName: string read fCustomTypeName write setCustomTypeName;
     property OnActivate: TMemoryRecordActivateEvent read fOnActivate write fOnActivate;
     property OnDeactivate: TMemoryRecordActivateEvent read fOnDeActivate write fOndeactivate;
     property OnDestroy: TNotifyEvent read fOnDestroy write fOnDestroy;
@@ -630,7 +627,7 @@ begin
         if autoassemblerdata.registeredsymbols=nil then
           autoassemblerdata.registeredsymbols:=tstringlist.create;
 
-        if autoassemble(autoassemblerdata.script, false, state, false, false, autoassemblerdata.allocs, autoassemblerdata.registeredsymbols) then
+        if autoassemble(autoassemblerdata.script, false, state, false, false, autoassemblerdata.allocs, autoassemblerdata.registeredsymbols, @autoassemblerdata.exceptions) then
         begin
           fActive:=state;
           if autoassemblerdata.registeredsymbols.Count>0 then //if it has a registered symbol then reinterpret all addresses

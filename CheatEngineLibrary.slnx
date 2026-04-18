@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="example/c#/Assembler/Assembler.csproj" Id="c4fbd470-bad2-4283-a51f-443f99e39e59" />
+  <Project Path="example/c#/Scanner/Scanner/Scanner.csproj" Id="5483fa3b-d228-48ff-b82b-4d87a9753f78">
+    <Platform Project="x64" />
+  </Project>
+</Solution>

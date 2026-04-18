@@ -682,4 +682,3 @@ target
 *.exe
 /.lazbuild
 /example/c#/Assembler/obj/**
-/example/c#/Assembler/obj/Debug/DesignTimeResolveAssemblyReferencesInput.cache

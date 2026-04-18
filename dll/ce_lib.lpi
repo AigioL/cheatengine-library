@@ -24,13 +24,25 @@
       <StringTable ProductVersion=""/>
     </VersionInfo>
     <BuildModes Count="2" Active="Release 64-Bit">
-      <Item1 Name="Release 64-Bit" Default="True"/>
-      <Item2 Name="Release 32-Bit">
+      <Item1 Name="Release 64-Bit" Default="True">
         <CompilerOptions>
           <Version Value="11"/>
           <PathDelim Value="\"/>
           <Target>
             <Filename Value="ce-lib64"/>
+          </Target>
+          <CodeGeneration>
+            <TargetCPU Value="x86_64"/>
+            <TargetOS Value="win64"/>
+          </CodeGeneration>
+        </CompilerOptions>
+      </Item1>
+      <Item2 Name="Release 32-Bit">
+        <CompilerOptions>
+          <Version Value="11"/>
+          <PathDelim Value="\"/>
+          <Target>
+            <Filename Value="ce-lib32"/>
           </Target>
           <SearchPaths>
             <IncludeFiles Value="$(ProjOutDir)"/>
@@ -45,7 +57,7 @@
           </Parsing>
           <CodeGeneration>
             <SmartLinkUnit Value="True"/>
-            <TargetCPU Value="x86_64"/>
+            <TargetCPU Value="i386"/>
             <TargetOS Value="win32"/>
             <Optimizations>
               <OptimizationLevel Value="3"/>

@@ -7,13 +7,13 @@ interface
 uses
   Classes, SysUtils, symbolhandler, byteinterpreter, CEFuncProc;
 
-procedure IProcessAddress(address : WideString ; vartype : TVariableType ; showashexadecimal: Boolean=false;
-  showAsSigned: boolean=false; bytesize: Integer = 1; out res_address : WideString = '');stdcall;
+procedure IProcessAddress(address : WideString ; vartype : TVariableType ; showashexadecimal: Boolean;
+  showAsSigned: boolean; bytesize: Integer; out res_address : WideString);stdcall;
 
 implementation
 
-procedure IProcessAddress(address : WideString ; vartype : TVariableType ; showashexadecimal: Boolean=false;
-  showAsSigned: boolean=false; bytesize: Integer = 1; out res_address : WideString = '');stdcall;
+procedure IProcessAddress(address : WideString ; vartype : TVariableType ; showashexadecimal: Boolean;
+  showAsSigned: boolean; bytesize: Integer; out res_address : WideString);stdcall;
 var a: PtrUInt;
   e: boolean;
 begin

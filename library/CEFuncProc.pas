@@ -271,10 +271,13 @@ type TCEAlloc=record
   varname: string;
   size: dword;
   prefered: ptrUint;
+  protection: dword;
 
 end;
 type PCEAlloc=^TCEAlloc;
 type TCEAllocArray=array of TCEAlloc;
+type TCEExceptionListArray=array of ptrUint;
+type PCEExceptionListArray=^TCEExceptionListArray;
 
 type
   MemoryRecord = record

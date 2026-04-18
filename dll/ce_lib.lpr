@@ -40,7 +40,7 @@ uses
     tp: TTokenPrivileges;
     prev: TTokenPrivileges;
     ReturnLength: Dword;
-    minworkingsize, maxworkingsize: longword;
+    minworkingsize, maxworkingsize: ptrUint;
   begin
     pid := GetCurrentProcessID;
     ownprocesshandle := OpenProcess(PROCESS_ALL_ACCESS, True, pid);

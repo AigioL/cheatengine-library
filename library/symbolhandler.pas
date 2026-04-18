@@ -189,7 +189,8 @@ type
     //userdefined symbols
     function DeleteUserdefinedSymbol(symbolname:string):boolean;
     function GetUserdefinedSymbolByName(symbolname:string):ptrUint;
-    function SetUserdefinedSymbolAllocSize(symbolname:string; size: dword): boolean;
+    function SetUserdefinedSymbolAllocSize(symbolname:string; size: dword): boolean; overload;
+    function SetUserdefinedSymbolAllocSize(symbolname:string; size: dword; prefered: ptrUint): boolean; overload;
     function GetUserdefinedSymbolByAddress(address:ptrUint):string;
     procedure AddUserdefinedSymbol(addressstring: string; symbolname: string; donotsave: boolean=false);
     procedure EnumerateUserdefinedSymbols(list:tstrings);
@@ -1077,7 +1078,14 @@ function TSymhandler.SetUserdefinedSymbolAllocSize(symbolname:string; size: dwor
 This function will find the userdefined symbol, and when found checks if it already
 allocated memory. If not allocate memory, else check if the size matches
 }
+begin
+  result:=SetUserdefinedSymbolAllocSize(symbolname, size, 0);
+end;
+
+function TSymhandler.SetUserdefinedSymbolAllocSize(symbolname:string; size: dword; prefered: ptrUint): boolean;
 var i:integer;
+    base: pointer;
+    allocsize: dword;
 begin
   result:=false;
   if size=0 then raise exception.Create(rsPleaseProvideABiggerSize);
@@ -1093,9 +1101,18 @@ begin
       }
       if (globalallocpid<>processid) or (globalalloc=nil) or (globalallocsizeleft<size) then //new alloc
       begin
-        globalalloc:=virtualallocex(processhandle,nil,max(65536,size),MEM_COMMIT , PAGE_EXECUTE_READWRITE);
+        allocsize:=max(65536,size);
+        if prefered<>0 then
+          base:=FindFreeBlockForRegion(prefered, allocsize)
+        else
+          base:=nil;
+
+        globalalloc:=virtualallocex(processhandle,base,allocsize,MEM_COMMIT , PAGE_EXECUTE_READWRITE);
+        if (globalalloc=nil) and (prefered<>0) then
+          globalalloc:=virtualallocex(processhandle,nil,allocsize,MEM_COMMIT , PAGE_EXECUTE_READWRITE);
+
         globalallocpid:=processid;
-        globalallocsizeleft:=max(65536,size);
+        globalallocsizeleft:=allocsize;
       end;
 
       if globalalloc=nil then
@@ -1125,9 +1142,18 @@ begin
       begin
         if (globalallocpid<>processid) or (globalalloc=nil) or (globalallocsizeleft<size) then //new alloc
         begin
+          allocsize:=max(65536,size);
           globalallocpid:=processid;
-          globalalloc:=virtualallocex(processhandle,nil,max(65536,size),MEM_COMMIT , PAGE_EXECUTE_READWRITE);
-          globalallocsizeleft:=max(65536,size);
+          if prefered<>0 then
+            base:=FindFreeBlockForRegion(prefered, allocsize)
+          else
+            base:=nil;
+
+          globalalloc:=virtualallocex(processhandle,base,allocsize,MEM_COMMIT , PAGE_EXECUTE_READWRITE);
+          if (globalalloc=nil) and (prefered<>0) then
+            globalalloc:=virtualallocex(processhandle,nil,allocsize,MEM_COMMIT , PAGE_EXECUTE_READWRITE);
+
+          globalallocsizeleft:=allocsize;
         end;
 
         if globalalloc=nil then

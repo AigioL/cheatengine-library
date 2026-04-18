@@ -540,11 +540,11 @@ end;
 
 procedure TSavedScanHandler.InitializeScanHandler;
 var datatype: string[6];
-    pm: ^TArrMemoryRegion;
-    i: integer;
-    p: ptrUint;
+  pm: ^TArrMemoryRegion;
+  i: integer;
+  p: ptrUint;
 
-    maxregionsize: integer;
+  maxregionsize: ptrUint;
 begin
   cleanup;
   maxregionsize:=20*4096;
@@ -572,7 +572,14 @@ begin
       p:=0;
       for i:=0 to maxnumberofregions-1 do
       begin
-        maxregionsize:=max(maxregionsize, pm[i].memorysize);
+        if pm[i].memorysize>maxregionsize then
+        begin
+          if pm[i].memorysize>high(ptrUint) then
+            maxregionsize:=high(ptrUint)
+          else
+            maxregionsize:=pm[i].memorysize;
+        end;
+
         pm[i].startaddress:=pointer(p); //set the offset in the file (if it wasn't set already)
         inc(p, pm[i].MemorySize);
       end;

@@ -78,7 +78,10 @@ begin
   if (headersize=0) or (PImageDosHeader(header)^._lfanew<=headersize-sizeof(TImageNtHeaders)) then
   begin
     ImageNTHeader:=PImageNtHeaders(ptrUint(header)+PImageDosHeader(header)^._lfanew);
-    result:=ImageNTHeader.OptionalHeader.BaseOfData;
+    if ImageNTHeader.FileHeader.Machine=$8664 then
+      exit;
+
+    result:=PImageNtHeaders32(ImageNTHeader).OptionalHeader.BaseOfData;
   end;
 end;
 

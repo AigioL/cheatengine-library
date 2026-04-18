@@ -59,7 +59,7 @@ var modulelist: tstringlist;
     base: ptrUint;
     header: pointer;
     headersize: dword;
-    br: dword;
+  br: ptrUint;
 begin
   code:=$00400000;
   data:=$00400000; //on failure

@@ -10,7 +10,7 @@ Special care should be taken to add multithreaded scanning routines
 
 interface
 
-uses windows, FileUtil, LCLIntf,sysutils, classes,ComCtrls,dialogs, NewKernelHandler,math,
+uses windows, FileUtil, LazFileUtils, LCLIntf,sysutils, classes,ComCtrls,dialogs, NewKernelHandler,math,
      SyncObjs,SaveFirstScan, savedscanhandler, autoassembler,
      symbolhandler, CEFuncProc,shellapi, customtypehandler, fileaccess, groupscancommandparser,
      settings;

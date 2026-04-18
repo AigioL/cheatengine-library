@@ -13,11 +13,11 @@ uses jwawindows, windows, Assemblerunit, classes, LCLIntf,symbolhandler,
 function getenableanddisablepos(code:tstrings;var enablepos,disablepos: integer): boolean;
 function autoassemble(code: tstrings;popupmessages: boolean):boolean; overload;
 function autoassemble(code: Tstrings; popupmessages,enable,syntaxcheckonly, targetself: boolean):boolean; overload;
-function autoassemble(code: Tstrings; popupmessages,enable,syntaxcheckonly, targetself: boolean;var CEAllocarray: TCEAllocArray; registeredsymbols: tstringlist=nil): boolean; overload;
+function autoassemble(code: Tstrings; popupmessages,enable,syntaxcheckonly, targetself: boolean;var CEAllocarray: TCEAllocArray; registeredsymbols: tstringlist=nil; exceptions: PCEExceptionListArray=nil): boolean; overload;
 
 implementation
 
-uses StrUtils;
+uses StrUtils, memscan, autoassemblerexeptionhandler;
 
 resourcestring
   rsForwardJumpWithNoLabelDefined = 'Forward jump with no label defined';
@@ -41,10 +41,16 @@ resourcestring
   rsTheFileDoesNotExist = 'The file %s does not exist';
   rsWrongSyntaxLoadBinaryAddressFilename = 'Wrong syntax. LoadBinary(address,filename)';
   rsWrongSyntaxReAssemble = 'Wrong syntax. Reassemble(address)';
+  rsMissingExcept = 'Missing {$EXCEPT} for {$TRY} at line %d';
   rsSyntaxError = 'Syntax error';
   rsTheArrayOfByteCouldNotBeFound = 'The array of byte ''%s'' could not be found';
+  rsAATheArrayOfByteNamed = 'The array of byte named %s could not be found';
+  rsAAErrorWhileSacnningForAobs = 'Error while scanning for AOB''s : ';
+  rsAAError = 'Error: ';
+  rsAAModuleNotFound = 'module not found:';
   rsWrongSyntaxAOBSCANName11223355 = 'Wrong syntax. AOBSCAN(name,11 22 33 ** 55)';
   rsWrongSyntaxAOBSCANMODULEName11223355 = 'Wrong syntax. AOBSCANMODULE(name, module, 11 22 33 ** 55)';
+  rsWrongSyntaxAOBSCANREGION = 'Wrong syntax. AOBSCANREGION(name, startaddress, stopaddress, 11 22 33 ** 55)';
 
   rsDefineAlreadyDefined = 'Define %s already defined';
   rsWrongSyntaxDEFINENameWhatever = 'Wrong syntax. DEFINE(name,whatever)';
@@ -63,12 +69,15 @@ resourcestring
   rsErrorInLine = 'Error in line %s (%s) :%s';
   rsWasSupposedToBeAddedToTheSymbollistButItIsnTDeclar = '%s was supposed to be added to the symbollist, but it isn''t declared';
   rsTheAddressInCreatethreadIsNotValid = 'The address in createthread(%s) is not valid';
+  rsTheAddressInCreatethreadAndWaitIsNotValid = 'The address in createthreadandwait(%s) is not valid';
   rsTheAddressInLoadbinaryIsNotValid = 'The address in loadbinary(%s,%s) is not valid';
   rsThisCodeCanBeInjectedAreYouSure = 'This code can be injected. Are you sure?';
   rsFailureToAllocateMemory = 'Failure to allocate memory';
   rsNotAllInstructionsCouldBeInjected = 'Not all instructions could be injected';
   rsTheFollowingKernelAddressesWhereAllocated = 'The following kernel addresses where allocated';
   rsTheCodeInjectionWasSuccessfull = 'The code injection was successfull';
+  rsCouldNotDecodeInstructionForReassemble = 'Could not decode the instruction at %s for Reassemble';
+  rsReassembleTargetOutOfRange = 'Reassemble(%s) target is out of range';
   rsYouCanOnlyHaveOneEnableSection = 'You can only have one enable section';
   rsYouCanOnlyHaveOneDisableSection = 'You can only have one disable section';
   rsYouHavnTSpecifiedAEnableSection = 'You havn''t specified a enable section';
@@ -80,16 +89,61 @@ resourcestring
 procedure tokenize(input: string; tokens: tstringlist);
 var i: integer;
     a: integer;
+    inquote: boolean;
+    inquote2: boolean;
 begin
 
   tokens.clear;
+  inquote:=false;
+  inquote2:=false;
   a:=-1;
   for i:=1 to length(input) do
   begin
+    if inquote and (input[i]<>'''') then continue;
+    if inquote2 and (input[i]<>'"') then continue;
+
     case input[i] of
-      'a'..'z','A'..'Z','0'..'9','.', '_','#','@': if a=-1 then a:=i;
+      'a'..'z','A'..'Z','0'..'9','.', '_','#','@', #128..#255: if a=-1 then a:=i;
       else
       begin
+        if input[i]='''' then
+        begin
+          if inquote then
+          begin
+            if a<>-1 then
+              tokens.AddObject(copy(input,a,i-a),tobject(a));
+
+            a:=-1;
+            inquote:=false;
+          end
+          else
+          begin
+            inquote:=true;
+            a:=i;
+          end;
+
+          continue;
+        end;
+
+        if input[i]='"' then
+        begin
+          if inquote2 then
+          begin
+            if a<>-1 then
+              tokens.AddObject(copy(input,a,i-a),tobject(a));
+
+            a:=-1;
+            inquote2:=false;
+          end
+          else
+          begin
+            inquote2:=true;
+            a:=i;
+          end;
+
+          continue;
+        end;
+
         if a<>-1 then
           tokens.AddObject(copy(input,a,i-a),tobject(a));
         a:=-1;
@@ -128,12 +182,12 @@ begin
   result:=input;
   tokens:=tstringlist.Create;
   try
-    tokenize(input,tokens);
-    for i:=0 to tokens.Count-1 do
+    tokenize(result,tokens);
+    for i:=tokens.Count-1 downto 0 do
       if tokens[i]=token then
       begin
         j:=integer(tokens.Objects[i]);
-        result:=copy(input,1,j-1)+replacewith+copy(input,j+length(token),length(input));
+        result:=copy(result,1,j-1)+replacewith+copy(result,j+length(token),length(result));
       end;
 
   finally
@@ -359,30 +413,54 @@ begin
 end;
 
 
+procedure getPotentialLabels(code: Tstrings; labels: TStrings);
+var
+  i: integer;
+  currentline: string;
+  a: int64;
+begin
+  for i:=0 to code.count-1 do
+  begin
+    currentline:=trim(code[i]);
+    if (currentline<>'') and (currentline[length(currentline)]=':') then
+    begin
+      if (pos('+', currentline)=0) and (pos('.', currentline)=0) then
+      begin
+        currentline:=copy(currentline,1,length(currentline)-1);
+        if trystrtoint64('$'+currentline, a)=false then
+          labels.Add(currentline);
+      end;
+    end;
+  end;
+end;
+
+
 procedure removecomments(code: tstrings);
 var i,j: integer;
     currentline: string;
     instring: boolean;
     incomment: boolean;
+    bracecomment: boolean;
 begin
   //remove comments
-  instring:=false;
   incomment:=false;
+  bracecomment:=false;
   for i:=0 to code.count-1 do
   begin
     currentline:=code[i];
+    instring:=false;
     
     for j:=1 to length(currentline) do
     begin
       if incomment then
       begin
         //inside a comment, remove everything till a } is encountered
-        if ((currentline[j]='}') and (processhandler.SystemArchitecture<>archArm)) or
-           ((currentline[j]='*') and (j<length(currentline)) and (currentline[j+1]='/')) then
+        if (bracecomment and (currentline[j]='}') and (processhandler.SystemArchitecture<>archArm)) or
+           ((not bracecomment) and (currentline[j]='*') and (j<length(currentline)) and (currentline[j+1]='/')) then
         begin
           incomment:=false; //and continue parsing the code...
 
-          if ((currentline[j]='*') and (j<length(currentline)) and (currentline[j+1]='/')) then
+          if not bracecomment then
             currentline[j+1]:=' ';
         end;
 
@@ -407,6 +485,7 @@ begin
              ((currentline[j]='/') and (j<length(currentline)) and (currentline[j+1]='*')) then
           begin
             incomment:=true;
+            bracecomment:=currentline[j]='{';
             currentline[j]:=' '; //replace from here till the first } with spaces, this goes on for multiple lines
           end;
         end;
@@ -516,7 +595,445 @@ begin
   end;
 end;
 
-function autoassemble2(code: tstrings;popupmessages: boolean;syntaxcheckonly:boolean; targetself: boolean ;var ceallocarray:TCEAllocArray; registeredsymbols: tstringlist=nil):boolean;
+
+procedure splitparameters(const s: string; list: TStrings; separators: TSysCharSet=[',']);
+var i: integer;
+begin
+  list.Clear;
+  ExtractStrings(separators, [' ',#9,#13,#10], pchar(s), list);
+
+  i:=0;
+  while i<list.Count do
+  begin
+    list[i]:=trim(list[i]);
+    if list[i]='' then
+      list.Delete(i)
+    else
+      inc(i);
+  end;
+end;
+
+procedure parseTryExcept(code: tstrings; var exceptionlist: TAAExceptionInfoList);
+var
+  i,j: integer;
+  trynr: integer;
+  trylist: array of record
+    linenr: integer;
+    trynr: integer;
+    hasexcept: boolean;
+    trylabel: string;
+    exceptlabel: string;
+  end;
+  found: boolean;
+begin
+  trynr:=0;
+  setlength(trylist,0);
+
+  for i:=0 to code.Count-1 do
+  begin
+    if uppercase(TrimRight(code[i]))='{$TRY}' then
+    begin
+      inc(trynr);
+
+      j:=length(trylist);
+      setlength(trylist, j+1);
+      trylist[j].trynr:=trynr;
+      trylist[j].hasexcept:=false;
+      trylist[j].linenr:=ptruint(code.Objects[i]);
+      trylist[j].trylabel:='tryoperation_'+IntToStr(trynr);
+      code[i]:=trylist[j].trylabel+':';
+    end;
+
+    if uppercase(TrimRight(code[i]))='{$EXCEPT}' then
+    begin
+      found:=false;
+      for j:=length(trylist)-1 downto 0 do
+      begin
+        if not trylist[j].hasexcept then
+        begin
+          trylist[j].hasexcept:=true;
+          trylist[j].exceptlabel:='tryoperation'+IntToStr(trylist[j].trynr)+'_except';
+          code[i]:=trylist[j].exceptlabel+':';
+          found:=true;
+          break;
+        end;
+      end;
+
+      if not found then
+        raise exception.Create(Format('Found an {$EXCEPT} at line %d with no matching {$TRY}', [ptruint(code.Objects[i])]));
+    end;
+  end;
+
+  setlength(exceptionlist, length(trylist));
+  for i:=0 to length(trylist)-1 do
+  begin
+    code.Insert(0,'label('+trylist[i].trylabel+')');
+    code.Insert(0,'label('+trylist[i].exceptlabel+')');
+    exceptionlist[i].trylabel:=trylist[i].trylabel;
+    exceptionlist[i].exceptlabel:=trylist[i].exceptlabel;
+
+    if not trylist[i].hasexcept then
+      raise exception.Create(Format(rsMissingExcept, [trylist[i].linenr]));
+  end;
+end;
+
+function getaobscanstopaddress: ptrUint;
+begin
+  if processhandler.is64Bit then
+    result:=high(ptrUint)
+  else
+    result:=$ffffffff;
+end;
+
+function aobscans(code: tstrings; syntaxcheckonly: boolean): boolean;
+type
+  TAOBEntry = record
+    name: string;
+    aobstring: string;
+    linenumber: integer;
+  end;
+
+var i,j,m,a,b,c,d,e: integer;
+    currentline: string;
+    s1,s2,s3,s4: string;
+    aobscanmodules: array of record
+      name: string;
+      entries: array of TAOBEntry;
+      minaddress, maxaddress: ptrUint;
+      protection: string;
+      memscan: TMemScan;
+    end;
+    mi: TModuleInfo;
+    startaddress, stopaddress, testptr: ptrUint;
+    cpucount: integer;
+    threads: integer;
+    aobstrings: string;
+    results: TAddresses;
+    error: boolean;
+    errorstring: string;
+
+  procedure finished(f: integer);
+  var
+    i: integer;
+    aoblist: string;
+  begin
+    setlength(results,0);
+    if length(aobscanmodules[f].entries)=1 then
+    begin
+      if aobscanmodules[f].memscan.GetOnlyOneResult(testptr) then
+      begin
+        setlength(results,1);
+        results[0]:=testptr;
+
+        if not InRangeX(results[0], aobscanmodules[f].minaddress, aobscanmodules[f].maxaddress) then
+          raise exception.Create('Invalid result for aob region scan');
+      end;
+    end
+    else
+      aobscanmodules[f].memscan.GetOnlyOneResults(results);
+
+    if length(results)=length(aobscanmodules[f].entries) then
+    begin
+      for i:=0 to length(aobscanmodules[f].entries)-1 do
+      begin
+        if results[i]=0 then
+        begin
+          error:=true;
+          errorstring:=format(rsAATheArrayOfByteNamed, [aobscanmodules[f].entries[i].name]);
+        end
+        else
+          code[aobscanmodules[f].entries[i].linenumber]:='DEFINE('+aobscanmodules[f].entries[i].name+', '+IntToHex(results[i],8)+')';
+      end;
+    end
+    else
+    begin
+      error:=true;
+      aoblist:='';
+      for i:=0 to length(aobscanmodules[f].entries)-1 do
+        aoblist:=aoblist+aobscanmodules[f].entries[i].name+#13#10;
+
+      if aobscanmodules[f].memscan.GetErrorString<>'' then
+        errorstring:=rsAAErrorWhileSacnningForAobs+aoblist+#13#10+rsAAError+aobscanmodules[f].memscan.GetErrorString
+      else
+        errorstring:=rsAAErrorWhileSacnningForAobs+aoblist+#13#10+rsAAError+'Not all results found';
+    end;
+
+    aobscanmodules[f].memscan.Free;
+    aobscanmodules[f].memscan:=nil;
+    dec(threads);
+  end;
+begin
+  result:=false;
+  error:=false;
+  setlength(aobscanmodules,0);
+  cpucount:=GetCPUCount;
+  if cpucount<1 then
+    cpucount:=1;
+  threads:=0;
+
+  for i:=0 to code.Count-1 do
+  begin
+    currentline:=trim(code[i]);
+
+    if uppercase(copy(currentline,1,10))='AOBSCANEX(' then
+    begin
+      a:=pos('(',currentline);
+      b:=pos(',',currentline);
+      c:=pos(')',currentline);
+      if (a<=0) or (b<=0) or (c<=0) then
+        raise exception.Create(rsWrongSyntaxAOBSCANName11223355);
+
+      s1:=trim(copy(currentline,a+1,b-a-1));
+      s2:=trim(copy(currentline,b+1,c-b-1));
+
+      if not syntaxcheckonly then
+      begin
+        m:=-1;
+        for j:=0 to length(aobscanmodules)-1 do
+          if aobscanmodules[j].name=' ' then
+          begin
+            m:=j;
+            break;
+          end;
+
+        if m=-1 then
+        begin
+          setlength(aobscanmodules, length(aobscanmodules)+1);
+          m:=length(aobscanmodules)-1;
+          aobscanmodules[m].name:=' ';
+          aobscanmodules[m].minaddress:=0;
+          aobscanmodules[m].maxaddress:=getaobscanstopaddress;
+          aobscanmodules[m].protection:='*C*W+X';
+          setlength(aobscanmodules[m].entries,0);
+        end;
+
+        j:=length(aobscanmodules[m].entries);
+        setlength(aobscanmodules[m].entries, j+1);
+        aobscanmodules[m].entries[j].name:=s1;
+        aobscanmodules[m].entries[j].aobstring:=s2;
+        aobscanmodules[m].entries[j].linenumber:=i;
+      end
+      else
+        code[i]:='DEFINE('+s1+', 00000000)';
+
+      continue;
+    end
+    else
+    if uppercase(copy(currentline,1,8))='AOBSCAN(' then
+    begin
+      a:=pos('(',currentline);
+      b:=pos(',',currentline);
+      c:=pos(')',currentline);
+      if (a<=0) or (b<=0) or (c<=0) then
+        raise exception.Create(rsWrongSyntaxAOBSCANName11223355);
+
+      s1:=trim(copy(currentline,a+1,b-a-1));
+      s2:=trim(copy(currentline,b+1,c-b-1));
+
+      if not syntaxcheckonly then
+      begin
+        m:=-1;
+        for j:=0 to length(aobscanmodules)-1 do
+          if aobscanmodules[j].name='' then
+          begin
+            m:=j;
+            break;
+          end;
+
+        if m=-1 then
+        begin
+          setlength(aobscanmodules, length(aobscanmodules)+1);
+          m:=length(aobscanmodules)-1;
+          aobscanmodules[m].name:='';
+          aobscanmodules[m].minaddress:=0;
+          aobscanmodules[m].maxaddress:=getaobscanstopaddress;
+          aobscanmodules[m].protection:='';
+          setlength(aobscanmodules[m].entries,0);
+        end;
+
+        j:=length(aobscanmodules[m].entries);
+        setlength(aobscanmodules[m].entries, j+1);
+        aobscanmodules[m].entries[j].name:=s1;
+        aobscanmodules[m].entries[j].aobstring:=s2;
+        aobscanmodules[m].entries[j].linenumber:=i;
+      end
+      else
+        code[i]:='DEFINE('+s1+', 00000000)';
+
+      continue;
+    end
+    else
+    if uppercase(copy(currentline,1,14))='AOBSCANMODULE(' then
+    begin
+      a:=pos('(',currentline);
+      b:=pos(',',currentline);
+      c:=PosEx(',',currentline,b+1);
+      d:=pos(')',currentline);
+      if d<=a then
+        raise exception.Create(rsWrongSyntaxAOBSCANMODULEName11223355);
+
+      if (a<=0) or (b<=0) or (c<=0) then
+        raise exception.Create(rsWrongSyntaxAOBSCANMODULEName11223355);
+
+      s1:=trim(copy(currentline,a+1,b-a-1));
+      s2:=trim(copy(currentline,b+1,c-b-1));
+      s3:=trim(copy(currentline,c+1,d-c-1));
+
+      if not syntaxcheckonly then
+      begin
+        m:=-1;
+        for j:=0 to length(aobscanmodules)-1 do
+          if aobscanmodules[j].name=uppercase(s2) then
+          begin
+            m:=j;
+            break;
+          end;
+
+        if m=-1 then
+        begin
+          setlength(aobscanmodules, length(aobscanmodules)+1);
+          m:=length(aobscanmodules)-1;
+          aobscanmodules[m].name:=uppercase(s2);
+          aobscanmodules[m].protection:='';
+
+          if symhandler.getmodulebyname(s2, mi) then
+          begin
+            aobscanmodules[m].minaddress:=mi.baseaddress;
+            aobscanmodules[m].maxaddress:=mi.baseaddress+mi.basesize;
+          end
+          else
+          begin
+            try
+              testptr:=symhandler.getAddressFromName(s2);
+              if symhandler.getmodulebyaddress(testptr, mi) then
+              begin
+                aobscanmodules[m].minaddress:=mi.baseaddress;
+                aobscanmodules[m].maxaddress:=mi.baseaddress+mi.basesize;
+              end;
+            except
+              raise exception.Create(rsAAModuleNotFound+s2);
+            end;
+          end;
+
+          if aobscanmodules[m].maxaddress=0 then
+            raise exception.Create(rsAAModuleNotFound+s2);
+
+          setlength(aobscanmodules[m].entries,0);
+        end;
+
+        j:=length(aobscanmodules[m].entries);
+        setlength(aobscanmodules[m].entries, j+1);
+        aobscanmodules[m].entries[j].name:=s1;
+        aobscanmodules[m].entries[j].aobstring:=s3;
+        aobscanmodules[m].entries[j].linenumber:=i;
+      end;
+
+      if syntaxcheckonly then
+        code[i]:='DEFINE('+s1+', 00000000)';
+
+      continue;
+    end
+    else
+    if uppercase(copy(currentline,1,14))='AOBSCANREGION(' then
+    begin
+      a:=pos('(',currentline);
+      b:=pos(',',currentline);
+      c:=PosEx(',',currentline,b+1);
+      d:=PosEx(',',currentline,c+1);
+      e:=pos(')',currentline);
+      if (a<=0) or (b<=0) or (c<=0) or (d<=0) or (e<=a) then
+        raise exception.Create(rsWrongSyntaxAOBSCANREGION);
+
+      s1:=trim(copy(currentline,a+1,b-a-1));
+      s2:=trim(copy(currentline,b+1,c-b-1));
+      s3:=trim(copy(currentline,c+1,d-c-1));
+      s4:=trim(copy(currentline,d+1,e-d-1));
+
+      if not syntaxcheckonly then
+      begin
+        startaddress:=symhandler.getAddressFromName(s2);
+        stopaddress:=symhandler.getAddressFromName(s3);
+
+        m:=-1;
+        for j:=0 to length(aobscanmodules)-1 do
+          if (startaddress=aobscanmodules[j].minaddress) and (stopaddress=aobscanmodules[j].maxaddress) then
+          begin
+            m:=j;
+            break;
+          end;
+
+        if m=-1 then
+        begin
+          setlength(aobscanmodules, length(aobscanmodules)+1);
+          m:=length(aobscanmodules)-1;
+          aobscanmodules[m].name:='<REGION>';
+          aobscanmodules[m].minaddress:=startaddress;
+          aobscanmodules[m].maxaddress:=stopaddress;
+          aobscanmodules[m].protection:='';
+          setlength(aobscanmodules[m].entries,0);
+        end;
+
+        j:=length(aobscanmodules[m].entries);
+        setlength(aobscanmodules[m].entries, j+1);
+        aobscanmodules[m].entries[j].name:=s1;
+        aobscanmodules[m].entries[j].aobstring:=s4;
+        aobscanmodules[m].entries[j].linenumber:=i;
+      end
+      else
+        code[i]:='DEFINE('+s1+', 00000000)';
+
+      continue;
+    end;
+  end;
+
+  if length(aobscanmodules)>0 then
+    result:=true;
+
+  for i:=0 to length(aobscanmodules)-1 do
+  begin
+    j:=0;
+    while threads>=cpucount do
+    begin
+      if (aobscanmodules[j].memscan<>nil) and aobscanmodules[j].memscan.waittilldone(50) then
+      begin
+        finished(j);
+        break;
+      end;
+
+      if i>0 then
+        j:=(j+1) mod i
+      else
+        break;
+    end;
+
+    inc(threads);
+    aobscanmodules[i].memscan:=TMemScan.Create(nil);
+    aobscanmodules[i].memscan.OnlyOne:=true;
+    if aobscanmodules[i].protection<>'' then
+      aobscanmodules[i].memscan.parseProtectionflags(aobscanmodules[i].protection);
+
+    aobstrings:='';
+    for j:=0 to length(aobscanmodules[i].entries)-1 do
+      aobstrings:=aobstrings+'('+aobscanmodules[i].entries[j].aobstring+')';
+
+    if length(aobscanmodules[i].entries)=1 then
+      aobscanmodules[i].memscan.firstscan(soExactValue, vtByteArray, rtRounded, aobscanmodules[i].entries[0].aobstring, '', aobscanmodules[i].minaddress, aobscanmodules[i].maxaddress, true, false, false, false, fsmNotAligned)
+    else
+      aobscanmodules[i].memscan.firstscan(soExactValue, vtByteArrays, rtRounded, aobstrings, '', aobscanmodules[i].minaddress, aobscanmodules[i].maxaddress, true, false, false, false, fsmNotAligned);
+  end;
+
+  for i:=0 to length(aobscanmodules)-1 do
+    if aobscanmodules[i].memscan<>nil then
+    begin
+      aobscanmodules[i].memscan.waittilldone;
+      finished(i);
+    end;
+
+  if error then
+    raise exception.Create(errorstring);
+end;
+
+function autoassemble2(code: tstrings;popupmessages: boolean;syntaxcheckonly:boolean; targetself: boolean ;var ceallocarray:TCEAllocArray; registeredsymbols: tstringlist=nil; exceptions: PCEExceptionListArray=nil):boolean;
 {
 registeredsymbols is a stringlist that is initialized by the caller as case insensitive and no duplicates
 }
@@ -525,6 +1042,7 @@ registeredsymbols is a stringlist that is initialized by the caller as case inse
 type tassembled=record
   address: ptrUint;
   bytes: TAssemblerbytes;
+  createthreadandwait: integer;
 end;
 
 
@@ -545,6 +1063,16 @@ type tdefine=record
   name: string;
   whatever: string;
 end;
+type treassembleentry=record
+  address: string;
+end;
+type trelocationkind=(rkNone, rkRelative, rkRipRelative);
+type tdecodedinstruction=record
+  length: integer;
+  relocationkind: trelocationkind;
+  relocationoffset: integer;
+  relocationsize: integer;
+end;
 var i,j,k,l,e: integer;
     currentline: string;
     currentlinenr: integer;
@@ -564,6 +1092,7 @@ var i,j,k,l,e: integer;
       bytelength: integer;
       bytes: PByteArray;
     end;
+    reassembles: array of treassembleentry;
 
 
     globalallocs, allocs, kallocs, sallocs: array of tcealloc;
@@ -574,6 +1103,11 @@ var i,j,k,l,e: integer;
     addsymbollist: array of string;
     deletesymbollist: array of string;
     createthread: array of string;
+    createthreadandwait: array of record
+      name: string;
+      position: integer;
+      timeout: dword;
+    end;
 
 //    aoblist: array of TAOBEntry;
 
@@ -589,7 +1123,7 @@ var i,j,k,l,e: integer;
     multilineinjection: tstringlist;
     include: tstringlist;
     testdword,bw: dword;
-    testPtr: ptrUint;
+    testPtr, testPtr2: ptrUint;
     binaryfile: tmemorystream;
 
     incomment: boolean;
@@ -601,19 +1135,455 @@ var i,j,k,l,e: integer;
 
     bytes: tbytes;
     prefered: ptrUint;
+    allocationprotection: dword;
+    createthreadandwaitid: integer;
+    hastryexcept: boolean;
+    exceptionlist: TAAExceptionInfoList;
 
     oldhandle: thandle;
     oldsymhandler: TSymHandler;
 
 
     threadhandle: THandle;
+    parameters: TStringList;
+    potentiallabels: TStringList;
+    strictmode: boolean;
+
+    function TryGetAddressFromScript(scriptaddress: string; var address: ptrUint): boolean;
+    var index: integer;
+    begin
+      result:=true;
+
+      try
+        address:=symhandler.getAddressFromName(scriptaddress);
+        exit;
+      except
+        result:=false;
+      end;
+
+      for index:=0 to length(labels)-1 do
+        if uppercase(labels[index].labelname)=uppercase(scriptaddress) then
+        begin
+          address:=labels[index].address;
+          exit(true);
+        end;
+
+      for index:=0 to length(allocs)-1 do
+        if uppercase(allocs[index].varname)=uppercase(scriptaddress) then
+        begin
+          address:=allocs[index].address;
+          exit(true);
+        end;
+
+      {$ifndef net}
+      for index:=0 to length(kallocs)-1 do
+        if uppercase(kallocs[index].varname)=uppercase(scriptaddress) then
+        begin
+          address:=kallocs[index].address;
+          exit(true);
+        end;
+      {$endif}
+
+      for index:=0 to length(defines)-1 do
+        if uppercase(defines[index].name)=uppercase(scriptaddress) then
+        begin
+          try
+            address:=symhandler.getAddressFromName(defines[index].whatever);
+            exit(true);
+          except
+            exit(false);
+          end;
+        end;
+    end;
+
+    function ReadSignedImmediate(memory: PByteArray; offset, size: integer): int64;
+    begin
+      case size of
+        1: result:=PShortInt(@memory[offset])^;
+        2: result:=PSmallInt(@memory[offset])^;
+        4: result:=PInteger(@memory[offset])^;
+        else result:=0;
+      end;
+    end;
+
+    procedure WriteSignedImmediate(memory: PByteArray; offset, size: integer; value: int64);
+    begin
+      case size of
+        1: PShortInt(@memory[offset])^:=shortint(value);
+        2: PSmallInt(@memory[offset])^:=smallint(value);
+        4: PInteger(@memory[offset])^:=integer(value);
+      end;
+    end;
+
+    function IsCandidatePrefixByte(bt: byte): boolean;
+    begin
+      result:=(bt=$66) or (bt=$f2) or (bt=$f3);
+    end;
+
+    function HasModRM(const entry: topcode): boolean;
+    begin
+      result:=(entry.opcode1 in [eo_reg0..eo_reg7, eo_reg]) or
+              (entry.opcode2 in [eo_reg0..eo_reg7, eo_reg]);
+    end;
+
+    function GetAddressSize(addressoverride: boolean): integer;
+    begin
+      if processhandler.is64Bit then
+      begin
+        if addressoverride then
+          result:=4
+        else
+          result:=8;
+      end
+      else
+      begin
+        if addressoverride then
+          result:=2
+        else
+          result:=4;
+      end;
+    end;
+
+    function GetExtraOpcodeSize(extraopcode: textraopcode): integer;
+    begin
+      case extraopcode of
+        eo_cb, eo_ib: result:=1;
+        eo_cw, eo_iw: result:=2;
+        eo_cd, eo_id: result:=4;
+        eo_cp: result:=6;
+        else result:=0;
+      end;
+    end;
+
+    function GetMoffsSize(param: tparam; addressoverride: boolean): integer;
+    begin
+      case param of
+        par_moffs8, par_moffs16, par_moffs32: result:=GetAddressSize(addressoverride);
+        else result:=0;
+      end;
+    end;
+
+    function GetModRMExtraSize(memory: PByteArray; modrmindex: integer; addresssize: integer; is64: boolean; var ripoffset: integer): integer;
+    var modrm, sib, modvalue, rmvalue, basevalue: byte;
+    begin
+      result:=1;
+      ripoffset:=-1;
+      modrm:=memory[modrmindex];
+      modvalue:=modrm shr 6;
+      rmvalue:=modrm and 7;
+
+      if modvalue=3 then
+        exit;
+
+      if addresssize=2 then
+      begin
+        case modvalue of
+          0:
+            if rmvalue=6 then
+              inc(result,2);
+          1: inc(result,1);
+          2: inc(result,2);
+        end;
+        exit;
+      end;
+
+      if rmvalue=4 then
+      begin
+        inc(result);
+        sib:=memory[modrmindex+1];
+        basevalue:=sib and 7;
+        case modvalue of
+          0:
+            if basevalue=5 then
+              inc(result,4);
+          1: inc(result,1);
+          2: inc(result,4);
+        end;
+      end
+      else
+      begin
+        case modvalue of
+          0:
+            if rmvalue=5 then
+            begin
+              if is64 and (addresssize=8) then
+                ripoffset:=modrmindex+1;
+              inc(result,4);
+            end;
+          1: inc(result,1);
+          2: inc(result,4);
+        end;
+      end;
+    end;
+
+    function TryDecodeX86Instruction(memory: PByteArray; bytesread: ptruint; out info: tdecodedinstruction): boolean;
+    var
+      prefixcount, actualprefixcount, opcodeindex, candidateprefixcount, opcodebytesonlycount: integer;
+      actualprefixes: array[0..2] of byte;
+      bt, lastrex: byte;
+      addressoverride: boolean;
+      entry: topcode;
+      entrybytes: array[0..2] of byte;
+      prefixscore, bestscore: integer;
+      candidateinfo: tdecodedinstruction;
+      modrmindex, addresssize, ripoffset, immediatesize, moffssize, regvalue: integer;
+      matched, sameprefixes: boolean;
+      idx: integer;
+      paramrelsize: integer;
+    begin
+      result:=false;
+      fillchar(info, sizeof(info), 0);
+      prefixcount:=0;
+      actualprefixcount:=0;
+      addressoverride:=false;
+      lastrex:=0;
+
+      while prefixcount<bytesread do
+      begin
+        bt:=memory[prefixcount];
+        case bt of
+          $f0, $2e, $36, $3e, $26, $64, $65:
+            ;
+          $f2, $f3, $66:
+            begin
+              if actualprefixcount<length(actualprefixes) then
+              begin
+                actualprefixes[actualprefixcount]:=bt;
+                inc(actualprefixcount);
+              end;
+            end;
+          $67:
+            addressoverride:=true;
+          else
+          begin
+            if processhandler.is64Bit and ((bt and $f0)=$40) then
+              lastrex:=bt
+            else
+              break;
+          end;
+        end;
+
+        inc(prefixcount);
+      end;
+
+      if prefixcount>=bytesread then
+        exit;
+
+      bestscore:=-1;
+      for idx:=1 to opcodecount do
+      begin
+        entry:=opcodes[idx];
+        if processhandler.is64Bit and entry.invalidin64bit then
+          continue;
+        if (not processhandler.is64Bit) and entry.invalidin32bit then
+          continue;
+
+        entrybytes[0]:=entry.bt1;
+        entrybytes[1]:=entry.bt2;
+        entrybytes[2]:=entry.bt3;
+
+        candidateprefixcount:=0;
+        while (candidateprefixcount<entry.bytes) and IsCandidatePrefixByte(entrybytes[candidateprefixcount]) do
+          inc(candidateprefixcount);
+
+        if candidateprefixcount>actualprefixcount then
+          continue;
+
+        matched:=true;
+        sameprefixes:=candidateprefixcount=actualprefixcount;
+        for opcodeindex:=0 to candidateprefixcount-1 do
+        begin
+          if actualprefixes[opcodeindex]<>entrybytes[opcodeindex] then
+          begin
+            matched:=false;
+            break;
+          end;
+        end;
+
+        if not matched then
+          continue;
+
+        opcodebytesonlycount:=entry.bytes-candidateprefixcount;
+        if prefixcount+opcodebytesonlycount>bytesread then
+          continue;
+
+        for opcodeindex:=0 to opcodebytesonlycount-1 do
+          if memory[prefixcount+opcodeindex]<>entrybytes[candidateprefixcount+opcodeindex] then
+          begin
+            matched:=false;
+            break;
+          end;
+
+        if not matched then
+          continue;
+
+        candidateinfo.length:=prefixcount+opcodebytesonlycount;
+        candidateinfo.relocationkind:=rkNone;
+        candidateinfo.relocationoffset:=0;
+        candidateinfo.relocationsize:=0;
+
+        modrmindex:=candidateinfo.length;
+        if HasModRM(entry) then
+        begin
+          if modrmindex>=bytesread then
+            continue;
+
+          regvalue:=(memory[modrmindex] shr 3) and 7;
+          if (entry.opcode1 in [eo_reg0..eo_reg7]) and (regvalue<>(ord(entry.opcode1)-ord(eo_reg0))) then
+            continue;
+          if (entry.opcode2 in [eo_reg0..eo_reg7]) and (regvalue<>(ord(entry.opcode2)-ord(eo_reg0))) then
+            continue;
+
+          addresssize:=GetAddressSize(addressoverride);
+          candidateinfo.length:=candidateinfo.length+GetModRMExtraSize(memory, modrmindex, addresssize, processhandler.is64Bit, ripoffset);
+
+          if ripoffset<>-1 then
+          begin
+            candidateinfo.relocationkind:=rkRipRelative;
+            candidateinfo.relocationoffset:=ripoffset;
+            candidateinfo.relocationsize:=4;
+          end;
+        end;
+
+        moffssize:=GetMoffsSize(entry.paramtype1, addressoverride)+GetMoffsSize(entry.paramtype2, addressoverride)+GetMoffsSize(entry.paramtype3, addressoverride);
+        immediatesize:=GetExtraOpcodeSize(entry.opcode1)+GetExtraOpcodeSize(entry.opcode2)+moffssize;
+        candidateinfo.length:=candidateinfo.length+immediatesize;
+
+        paramrelsize:=0;
+        if entry.paramtype1=par_rel8 then paramrelsize:=1 else
+        if entry.paramtype1=par_rel16 then paramrelsize:=2 else
+        if entry.paramtype1=par_rel32 then paramrelsize:=4 else
+        if entry.paramtype2=par_rel8 then paramrelsize:=1 else
+        if entry.paramtype2=par_rel16 then paramrelsize:=2 else
+        if entry.paramtype2=par_rel32 then paramrelsize:=4 else
+        if entry.paramtype3=par_rel8 then paramrelsize:=1 else
+        if entry.paramtype3=par_rel16 then paramrelsize:=2 else
+        if entry.paramtype3=par_rel32 then paramrelsize:=4;
+
+        if paramrelsize>0 then
+        begin
+          candidateinfo.relocationkind:=rkRelative;
+          candidateinfo.relocationsize:=paramrelsize;
+          candidateinfo.relocationoffset:=candidateinfo.length-paramrelsize;
+        end;
+
+        if candidateinfo.length>bytesread then
+          continue;
+
+        if candidateinfo.length>15 then
+          continue;
+
+        if sameprefixes then
+          prefixscore:=2
+        else
+          prefixscore:=1;
+
+        prefixscore:=prefixscore*100 + opcodebytesonlycount*10;
+        if candidateinfo.relocationkind<>rkNone then
+          inc(prefixscore);
+
+        if prefixscore>bestscore then
+        begin
+          info:=candidateinfo;
+          bestscore:=prefixscore;
+          result:=true;
+        end;
+      end;
+    end;
+
+    procedure BuildReassembledBytes(const sourceexpression: string; targetaddress: ptruint; var outbytes: TAssemblerBytes);
+    var
+      sourceaddress: ptruint;
+      instructionbuffer: array[0..15] of byte;
+      bytesread: ptruint;
+      decoded: tdecodedinstruction;
+      originaltarget: int64;
+      newoffset: int64;
+      index: integer;
+    begin
+      if processhandler.SystemArchitecture<>archX86 then
+        raise exception.Create(Format(rsCouldNotDecodeInstructionForReassemble, [sourceexpression]));
+
+      if not TryGetAddressFromScript(sourceexpression, sourceaddress) then
+        raise exception.Create(Format(rsCouldNotBeFound, [sourceexpression]));
+
+      if not ReadProcessMemory(processhandle, pointer(sourceaddress), @instructionbuffer[0], sizeof(instructionbuffer), bytesread) then
+        raise exception.Create(Format(rsCouldNotDecodeInstructionForReassemble, [sourceexpression]));
+
+      if not TryDecodeX86Instruction(@instructionbuffer[0], bytesread, decoded) then
+        raise exception.Create(Format(rsCouldNotDecodeInstructionForReassemble, [sourceexpression]));
+
+      setlength(outbytes, decoded.length);
+      for index:=0 to decoded.length-1 do
+        outbytes[index]:=instructionbuffer[index];
+
+      case decoded.relocationkind of
+        rkRelative:
+        begin
+          originaltarget:=sourceaddress+decoded.length+ReadSignedImmediate(@instructionbuffer[0], decoded.relocationoffset, decoded.relocationsize);
+          newoffset:=originaltarget-(targetaddress+decoded.length);
+
+          case decoded.relocationsize of
+            1:
+              if (newoffset<low(shortint)) or (newoffset>high(shortint)) then
+                raise exception.Create(Format(rsReassembleTargetOutOfRange, [sourceexpression]));
+            2:
+              if (newoffset<low(smallint)) or (newoffset>high(smallint)) then
+                raise exception.Create(Format(rsReassembleTargetOutOfRange, [sourceexpression]));
+            4:
+              if (newoffset<low(integer)) or (newoffset>high(integer)) then
+                raise exception.Create(Format(rsReassembleTargetOutOfRange, [sourceexpression]));
+          end;
+
+          WriteSignedImmediate(@outbytes[0], decoded.relocationoffset, decoded.relocationsize, newoffset);
+        end;
+
+        rkRipRelative:
+        begin
+          originaltarget:=sourceaddress+decoded.length+ReadSignedImmediate(@instructionbuffer[0], decoded.relocationoffset, decoded.relocationsize);
+          newoffset:=originaltarget-(targetaddress+decoded.length);
+          if (newoffset<low(integer)) or (newoffset>high(integer)) then
+            raise exception.Create(Format(rsReassembleTargetOutOfRange, [sourceexpression]));
+
+          WriteSignedImmediate(@outbytes[0], decoded.relocationoffset, decoded.relocationsize, newoffset);
+        end;
+      end;
+    end;
+
+    procedure handleCreateThreadAndWait(ctawi: integer);
+    begin
+      if not TryGetAddressFromScript(createthreadandwait[ctawi].name, testptr) then
+        raise exception.Create(Format(rsTheAddressInCreatethreadAndWaitIsNotValid, [createthreadandwait[ctawi].name]));
+
+      threadhandle:=createremotethread(processhandle,nil,0,pointer(testptr),nil,0,bw);
+      ok2:=threadhandle>0;
+
+      if ok2 then
+      begin
+        try
+          k:=createthreadandwait[ctawi].timeout;
+          if k<=0 then y:=INFINITE else y:=k;
+
+          if WaitForSingleObject(threadhandle, y)<>WAIT_OBJECT_0 then
+            raise exception.Create('createthreadandwait did not execute properly');
+        finally
+          closehandle(threadhandle);
+        end;
+      end;
+
+      createthreadandwait[ctawi].position:=-1;
+    end;
 begin
   setlength(readmems,0);
+  setlength(reassembles,0);
   setlength(allocs,0);
   setlength(kallocs,0);
   setlength(globalallocs,0);
   setlength(sallocs,0);
   setlength(createthread,0);
+  setlength(createthreadandwait,0);
+  setlength(exceptionlist,0);
+  hastryexcept:=false;
 
   currentaddress:=0;
 
@@ -657,6 +1627,9 @@ begin
 
 //2 pass scanner
   try
+    potentiallabels:=TStringList.Create;
+    potentiallabels.CaseSensitive:=false;
+
     setlength(assembled,1);
     setlength(kallocs,0);
     setlength(allocs,0);
@@ -670,11 +1643,29 @@ begin
 //    setlength(aoblist,0);
 
     tokens:=tstringlist.Create;
+    parameters:=TStringList.Create;
 
     incomment:=false;
 
+    strictmode:=false;
+    hastryexcept:=false;
+    for i:=0 to code.Count-1 do
+      if uppercase(TrimRight(code[i]))='{$STRICT}' then
+        strictmode:=true
+      else
+      if uppercase(TrimRight(code[i]))='{$TRY}' then
+      begin
+        hastryexcept:=true;
+      end;
+
+    if hastryexcept then
+      parseTryExcept(code, exceptionlist);
+
     removecomments(code);  //also trims each line
     unlabeledlabels(code);
+    if not strictmode then
+      getPotentialLabels(code, potentiallabels);
+    aobscans(code, syntaxcheckonly);
 
 
     //first pass
@@ -701,12 +1692,16 @@ begin
             if (a>0) and (b>0) then
             begin
               s1:=trim(copy(currentline,a+1,b-a-1));
+              splitparameters(s1, parameters);
 
-              setlength(addsymbollist,length(addsymbollist)+1);
-              addsymbollist[length(addsymbollist)-1]:=s1;
+              for j:=0 to parameters.Count-1 do
+              begin
+                setlength(addsymbollist,length(addsymbollist)+1);
+                addsymbollist[length(addsymbollist)-1]:=parameters[j];
 
-              if registeredsymbols<>nil then
-                registeredsymbols.Add(s1);
+                if registeredsymbols<>nil then
+                  registeredsymbols.Add(parameters[j]);
+              end;
             end
             else raise exception.Create(rsSyntaxError);
 
@@ -863,11 +1858,21 @@ begin
           begin
             a:=pos('(',currentline);
             b:=pos(',',currentline);
-            c:=pos(')',currentline);
-            if (a>0) and (b>0) and (c>0) then
+            c:=PosEx(',',currentline,b+1);
+            d:=pos(')',currentline);
+            if (a>0) and (b>0) and (d>0) then
             begin
               s1:=trim(copy(currentline,a+1,b-a-1));
-              s2:=trim(copy(currentline,b+1,c-b-1));
+              if c>0 then
+              begin
+                s2:=trim(copy(currentline,b+1,c-b-1));
+                s3:=trim(copy(currentline,c+1,d-c-1));
+              end
+              else
+              begin
+                s2:=trim(copy(currentline,b+1,d-b-1));
+                s3:='';
+              end;
 
               try
                 x:=strtoint(s2);
@@ -876,7 +1881,10 @@ begin
               end;
 
               //define it here already
-              symhandler.SetUserdefinedSymbolAllocSize(s1,x);              
+              if s3<>'' then
+                symhandler.SetUserdefinedSymbolAllocSize(s1, x, symhandler.getAddressFromName(s3))
+              else
+                symhandler.SetUserdefinedSymbolAllocSize(s1, x);
 
               setlength(globalallocs,length(globalallocs)+1);
               globalallocs[length(globalallocs)-1].address:=symhandler.GetUserdefinedSymbolByName(s1);
@@ -932,7 +1940,7 @@ begin
 
               include:=tstringlist.Create;
               try
-                include.LoadFromFile(s1);
+                include.LoadFromFile(s1{$if FPC_FULLVERSION >= 030200}, true{$endif});
                 removecomments(include);
                 unlabeledlabels(include);
 
@@ -946,6 +1954,39 @@ begin
               continue;
             end
             else raise exception.Create(rsWrongSyntaxIncludeFilenameCea);
+          end;
+
+          if uppercase(copy(currentline,1,20))='CREATETHREADANDWAIT' then
+          begin
+            a:=pos('(',currentline);
+            b:=pos(',',currentline);
+            c:=pos(')',currentline);
+            if (a>0) and (c>0) then
+            begin
+              if (b>0) and (b<c) then
+              begin
+                s1:=trim(copy(currentline,a+1,b-a-1));
+                s2:=trim(copy(currentline,b+1,c-b-1));
+                try
+                  x:=strtoint(s2);
+                except
+                  raise exception.Create(rsWrongSyntaxCreateThreadAddress);
+                end;
+              end
+              else
+              begin
+                s1:=trim(copy(currentline,a+1,c-a-1));
+                x:=0;
+              end;
+
+              setlength(createthreadandwait,length(createthreadandwait)+1);
+              createthreadandwait[length(createthreadandwait)-1].name:=s1;
+              createthreadandwait[length(createthreadandwait)-1].position:=length(assemblerlines)-1;
+              createthreadandwait[length(createthreadandwait)-1].timeout:=x;
+
+              setlength(assemblerlines,length(assemblerlines)-1);
+              continue;
+            end else raise exception.Create(rsWrongSyntaxCreateThreadAddress);
           end;
 
           if uppercase(copy(currentline,1,13))='CREATETHREAD(' then
@@ -1086,6 +2127,22 @@ begin
             end else raise exception.Create(rsWrongSyntaxLoadBinaryAddressFilename);
           end;
 
+          if uppercase(copy(currentline,1,11))='REASSEMBLE(' then
+          begin
+            a:=pos('(',currentline);
+            b:=pos(')',currentline);
+            if (a>0) and (b>0) then
+            begin
+              s1:=trim(copy(currentline,a+1,b-a-1));
+              setlength(reassembles, length(reassembles)+1);
+              reassembles[length(reassembles)-1].address:=s1;
+              assemblerlines[length(assemblerlines)-1]:='<REASSEMBLE'+IntToStr(length(reassembles)-1)+'>';
+              continue;
+            end
+            else
+              raise exception.Create(rsWrongSyntaxReAssemble);
+          end;
+
 
 
           if uppercase(copy(currentline,1,17))='UNREGISTERSYMBOL(' then
@@ -1097,9 +2154,24 @@ begin
             if (a>0) and (b>0) then
             begin
               s1:=trim(copy(currentline,a+1,b-a-1));
+              splitparameters(s1, parameters);
 
-              setlength(deletesymbollist,length(deletesymbollist)+1);
-              deletesymbollist[length(deletesymbollist)-1]:=s1;
+              if (parameters.Count=1) and (parameters[0]='*') and (registeredsymbols<>nil) then
+              begin
+                for j:=0 to registeredsymbols.Count-1 do
+                begin
+                  setlength(deletesymbollist,length(deletesymbollist)+1);
+                  deletesymbollist[length(deletesymbollist)-1]:=registeredsymbols[j];
+                end;
+              end
+              else
+              begin
+                for j:=0 to parameters.Count-1 do
+                begin
+                  setlength(deletesymbollist,length(deletesymbollist)+1);
+                  deletesymbollist[length(deletesymbollist)-1]:=parameters[j];
+                end;
+              end;
             end
             else raise exception.Create(rsSyntaxError);
 
@@ -1152,47 +2224,44 @@ begin
             begin
               s1:=trim(copy(currentline,a+1,b-a-1));
 
-
-              val('$'+s1,j,a);
-              if a=0 then raise exception.Create(Format(rsIsNotAValidIdentifier, [s1]));
-
-              varsize:=length(s1);
-
-              while (j<length(labels)) and (length(labels[j].labelname)>varsize) do
+              splitparameters(s1, parameters);
+              for k:=0 to parameters.Count-1 do
               begin
-                if labels[j].labelname=s1 then
-                  raise exception.Create(Format(rsIsBeingRedeclared, [s1]));
-                inc(j);
-              end;
+                s1:=parameters[k];
 
-              j:=length(labels);//quickfix
-              l:=j;
+                val('$'+s1,j,a);
+                if a=0 then raise exception.Create(Format(rsIsNotAValidIdentifier, [s1]));
 
-
-              //check for the line "labelname:"
-              ok1:=false;
-              for j:=0 to code.Count-1 do
-                if trim(code[j])=s1+':' then
+                varsize:=length(s1);
+                j:=0;
+                while (j<length(labels)) and (length(labels[j].labelname)>varsize) do
                 begin
-                  if ok1 then raise exception.Create(Format(rsLabelIsBeingDefinedMoreThanOnce, [s1]));
-                  ok1:=true;
+                  if labels[j].labelname=s1 then
+                    raise exception.Create(Format(rsIsBeingRedeclared, [s1]));
+                  inc(j);
                 end;
 
-              if not ok1 then raise exception.Create(Format(rsLabelIsNotDefinedInTheScript, [s1]));
+                j:=length(labels);
+                l:=j;
 
+                ok1:=false;
+                for j:=0 to code.Count-1 do
+                  if trim(code[j])=s1+':' then
+                  begin
+                    if ok1 then raise exception.Create(Format(rsLabelIsBeingDefinedMoreThanOnce, [s1]));
+                    ok1:=true;
+                  end;
 
-              //still here so ok
-              //insert it
-              setlength(labels,length(labels)+1);
-              for k:=length(labels)-1 downto j+1 do
-                labels[k]:=labels[k-1];
+                if not ok1 then raise exception.Create(Format(rsLabelIsNotDefinedInTheScript, [s1]));
 
+                setlength(labels,length(labels)+1);
+                labels[l].labelname:=s1;
+                labels[l].defined:=false;
+                setlength(labels[l].references,0);
+                setlength(labels[l].references2,0);
+              end;
 
-              labels[l].labelname:=s1;
-              labels[l].defined:=false;
               setlength(assemblerlines,length(assemblerlines)-1);
-              setlength(labels[l].references,0);
-              setlength(labels[l].references2,0);
 
               continue;
             end else raise exception.Create(rsSyntaxError);
@@ -1211,15 +2280,25 @@ begin
               if (a>0) and (b>0) then
               begin
                 s1:=trim(copy(currentline,a+1,b-a-1));
+                splitparameters(s1, parameters);
 
-                //find s1 in the ceallocarray
-                for j:=0 to length(ceallocarray)-1 do
+                if (parameters.Count=1) and (parameters[0]='*') then
                 begin
-                  if uppercase(ceallocarray[j].varname)=uppercase(s1) then
+                  for j:=0 to length(ceallocarray)-1 do
                   begin
                     setlength(dealloc,length(dealloc)+1);
                     dealloc[length(dealloc)-1]:=ceallocarray[j].address;
                   end;
+                end
+                else
+                begin
+                  for k:=0 to parameters.Count-1 do
+                    for j:=0 to length(ceallocarray)-1 do
+                      if uppercase(ceallocarray[j].varname)=uppercase(parameters[k]) then
+                      begin
+                        setlength(dealloc,length(dealloc)+1);
+                        dealloc[length(dealloc)-1]:=ceallocarray[j].address;
+                      end;
                 end;
               end;
             end;
@@ -1228,7 +2307,9 @@ begin
           end;
 
           //memory alloc
-          if uppercase(copy(currentline,1,6))='ALLOC(' then
+          if (uppercase(copy(currentline,1,6))='ALLOC(') or
+             (uppercase(copy(currentline,1,8))='ALLOCNX(') or
+             (uppercase(copy(currentline,1,8))='ALLOCXO(') then
           begin
             //syntax: alloc(x,size)    x=variable name size=bytes
             //or
@@ -1244,6 +2325,14 @@ begin
             if (a>0) and (b>0) and (d>0) then
             begin
               s1:=trim(copy(currentline,a+1,b-a-1));
+
+              if uppercase(copy(currentline,1,8))='ALLOCNX(' then
+                allocationprotection:=PAGE_READWRITE
+              else
+              if uppercase(copy(currentline,1,8))='ALLOCXO(' then
+                allocationprotection:=PAGE_EXECUTE_READ
+              else
+                allocationprotection:=PAGE_EXECUTE_READWRITE;
 
               if c>0 then
               begin
@@ -1282,6 +2371,7 @@ begin
 
               allocs[j].varname:=s1;
               allocs[j].size:=StrToInt(s2);
+              allocs[j].protection:=allocationprotection;
               if s3<>'' then
               begin
 
@@ -1413,7 +2503,20 @@ begin
 
               continue; //next line
             except
-              raise exception.Create(rsThisAddressSpecifierIsNotValid);
+              if potentiallabels.IndexOf(copy(currentline,1,length(currentline)-1))=-1 then
+                raise exception.Create(rsThisAddressSpecifierIsNotValid);
+
+              j:=length(labels);
+              setlength(labels,j+1);
+              labels[j].labelname:=copy(currentline,1,length(currentline)-1);
+              labels[j].assemblerline:=length(assemblerlines)-1;
+              labels[j].defined:=false;
+              labels[j].address:=0;
+              labels[j].insideAllocatedMemory:=false;
+              setlength(labels[j].references,0);
+              setlength(labels[j].references2,0);
+
+              continue;
             end;
           end;
 
@@ -1433,7 +2536,43 @@ begin
 
           try
             //replace identifiers in the line with their address
-            if not assemble(currentline,currentaddress,assembled[0].bytes, apNone, true) then raise exception.Create('bla');
+            ok1:=false;
+            try
+              ok1:=assemble(currentline,currentaddress,assembled[0].bytes, apNone, true);
+            except
+            end;
+
+            if not ok1 then
+            begin
+              for j:=0 to potentiallabels.count-1 do
+              begin
+                if processhandler.is64bit then
+                  currentline:=replacetoken(currentline,potentiallabels[j],'ffffffffffffffff')
+                else
+                  currentline:=replacetoken(currentline,potentiallabels[j],'00000000');
+
+                try
+                  ok1:=assemble(currentline,currentaddress,assembled[0].bytes, apNone, true);
+                  if ok1 then
+                  begin
+                    k:=length(labels);
+                    setlength(labels, k+1);
+                    labels[k].labelname:=potentiallabels[j];
+                    labels[k].defined:=false;
+                    labels[k].address:=0;
+                    labels[k].insideAllocatedMemory:=false;
+                    labels[k].assemblerline:=-1;
+                    setlength(labels[k].references,0);
+                    setlength(labels[k].references2,0);
+                    break;
+                  end;
+                except
+                end;
+              end;
+            end;
+
+            if not ok1 then
+              raise exception.Create('bla');
           except
             raise exception.Create(rsThisInstructionCanTBeCompiled);
           end;
@@ -1485,105 +2624,18 @@ begin
     //check to see if the addresses are valid (label, alloc, define)
     if length(createthread)>0 then
       for i:=0 to length(createthread)-1 do
-      begin
-        ok1:=true;
+        if not TryGetAddressFromScript(createthread[i], testptr) then
+          raise exception.Create(Format(rsTheAddressInCreatethreadIsNotValid, [createthread[i]]));
 
-        try
-          testptr:=symhandler.getAddressFromName(createthread[i]);
-        except
-          ok1:=false;
-        end;
-
-        if not ok1 then
-          for j:=0 to length(labels)-1 do
-            if uppercase(labels[j].labelname)=uppercase(createthread[i]) then
-            begin
-              ok1:=true;
-              break;
-            end;
-
-        if not ok1 then
-          for j:=0 to length(allocs)-1 do
-            if uppercase(allocs[j].varname)=uppercase(createthread[i]) then
-            begin
-              ok1:=true;
-              break;
-            end;
-
-        {$ifndef net}
-        if not ok1 then
-          for j:=0 to length(kallocs)-1 do
-            if uppercase(kallocs[j].varname)=uppercase(createthread[i]) then
-            begin
-              ok1:=true;
-              break;
-            end;
-        {$endif}
-
-        if not ok1 then
-          for j:=0 to length(defines)-1 do
-            if uppercase(defines[j].name)=uppercase(createthread[i]) then
-            begin
-              try
-                testptr:=symhandler.getAddressFromName(defines[j].whatever);
-                ok1:=true;
-              except
-              end;
-              break;
-            end;
-
-        if not ok1 then raise exception.Create(Format(rsTheAddressInCreatethreadIsNotValid, [createthread[i]]));
-
-      end;
+    if length(createthreadandwait)>0 then
+      for i:=0 to length(createthreadandwait)-1 do
+        if not TryGetAddressFromScript(createthreadandwait[i].name, testptr) then
+          raise exception.Create(Format(rsTheAddressInCreatethreadAndWaitIsNotValid, [createthreadandwait[i].name]));
 
     if length(loadbinary)>0 then
       for i:=0 to length(loadbinary)-1 do
       begin
-        ok1:=true;
-
-        try
-          testptr:=symhandler.getAddressFromName(loadbinary[i].address);
-        except
-          ok1:=false;
-        end;
-
-        if not ok1 then
-          for j:=0 to length(labels)-1 do
-            if uppercase(labels[j].labelname)=uppercase(loadbinary[i].address) then
-            begin
-              ok1:=true;
-              break;
-            end;
-
-        if not ok1 then
-          for j:=0 to length(allocs)-1 do
-            if uppercase(allocs[j].varname)=uppercase(loadbinary[i].address) then
-            begin
-              ok1:=true;
-              break;
-            end;
-
-        {$ifndef net}
-        if not ok1 then
-          for j:=0 to length(kallocs)-1 do
-            if uppercase(kallocs[j].varname)=uppercase(loadbinary[i].address) then
-            begin
-              ok1:=true;
-              break;
-            end;
-        {$endif}
-
-        if not ok1 then
-          for j:=0 to length(defines)-1 do
-            if uppercase(defines[j].name)=uppercase(loadbinary[i].address) then
-            begin
-              try
-                testptr:=symhandler.getAddressFromName(defines[j].whatever);
-                ok1:=true;
-              except
-              end;
-              break;
-            end;
+        ok1:=TryGetAddressFromScript(loadbinary[i].address, testptr);
 
         if not ok1 then raise exception.Create(Format(rsTheAddressInLoadbinaryIsNotValid, [loadbinary[i].address, loadbinary[i].filename]));
 
@@ -1605,49 +2657,43 @@ begin
 
       j:=0; //entry to go from
       prefered:=allocs[0].prefered;
+      allocationprotection:=allocs[0].protection;
       x:=allocs[0].size;
 
       for i:=1 to length(allocs)-1 do
       begin
-        //does this entry have a prefered location?
-        if allocs[i].prefered<>0 then
+        //does this entry have a prefered location or a different protection?
+        if ((allocs[i].prefered<>0) and (prefered<>allocs[i].prefered) and (prefered<>0)) or
+           (allocs[i].protection<>allocationprotection) then
         begin
-          //if yes, is it the same as the previous entry? (or was the previous one that doesn't care?)
-          if (prefered<>allocs[i].prefered) and (prefered<>0) then
+          if x>0 then //it has some previous entries with compatible locations
           begin
-            //different prefered address
-
-            if x>0 then //it has some previous entries with compatible locations
+            k:=10;
+            allocs[j].address:=0;
+            while (k>0) and (allocs[j].address=0) do
             begin
+              //try allocating until a memory region has been found (e.g due to quick allocating by the game)
+              allocs[j].address:=ptrUint(virtualallocex(processhandle,FindFreeBlockForRegion(prefered,x),x, MEM_RESERVE or MEM_COMMIT,allocationprotection));
+              if allocs[j].address=0 then OutputDebugString(rsFailureToAllocateMemory+' 1');
 
-
-              k:=10;
-              allocs[j].address:=0;
-              while (k>0) and (allocs[j].address=0) do
-              begin
-                //try allocating until a memory region has been found (e.g due to quick allocating by the game)
-                allocs[j].address:=ptrUint(virtualallocex(processhandle,FindFreeBlockForRegion(prefered,x),x, MEM_RESERVE or MEM_COMMIT,page_execute_readwrite));
-                if allocs[j].address=0 then OutputDebugString(rsFailureToAllocateMemory+' 1');
-
-                dec(k);
-              end;
-
-              if allocs[j].address=0 then
-                allocs[j].address:=ptrUint(virtualallocex(processhandle,nil,x, MEM_RESERVE or MEM_COMMIT,page_execute_readwrite));
-
-              if allocs[j].address=0 then OutputDebugString(rsFailureToAllocateMemory+' 2');
-
-              //adjust the addresses of entries that are part of this block
-              for k:=j+1 to i-1 do
-                allocs[k].address:=allocs[k-1].address+allocs[k-1].size;
-              x:=0;
+              dec(k);
             end;
 
+            if allocs[j].address=0 then
+              allocs[j].address:=ptrUint(virtualallocex(processhandle,nil,x, MEM_RESERVE or MEM_COMMIT,allocationprotection));
 
-            //new prefered address
-            j:=i;
-            prefered:=allocs[i].prefered;
+            if allocs[j].address=0 then OutputDebugString(rsFailureToAllocateMemory+' 2');
+
+            //adjust the addresses of entries that are part of this block
+            for k:=j+1 to i-1 do
+              allocs[k].address:=allocs[k-1].address+allocs[k-1].size;
+            x:=0;
           end;
+
+          //new prefered address / protection
+          j:=i;
+          prefered:=allocs[i].prefered;
+          allocationprotection:=allocs[i].protection;
         end;
 
         //no prefered location specified, OR same prefered location
@@ -1667,13 +2713,13 @@ begin
           prefered:=ptrUint(FindFreeBlockForRegion(prefered,x));
 
 
-          allocs[j].address:=ptrUint(virtualallocex(processhandle,pointer(prefered),x, MEM_RESERVE or MEM_COMMIT,page_execute_readwrite));
+          allocs[j].address:=ptrUint(virtualallocex(processhandle,pointer(prefered),x, MEM_RESERVE or MEM_COMMIT,allocationprotection));
           if allocs[j].address=0 then OutputDebugString(rsFailureToAllocateMemory+' 3');
           dec(k);
         end;
 
         if allocs[j].address=0 then
-          allocs[j].address:=ptrUint(virtualallocex(processhandle,nil,x, MEM_RESERVE or MEM_COMMIT,page_execute_readwrite));
+          allocs[j].address:=ptrUint(virtualallocex(processhandle,nil,x, MEM_RESERVE or MEM_COMMIT,allocationprotection));
 
         if allocs[j].address=0 then raise exception.create(rsFailureToAllocateMemory+' 4');
 
@@ -1706,6 +2752,13 @@ begin
     for i:=0 to length(assemblerlines)-1 do
     begin
       currentline:=assemblerlines[i];
+
+      createthreadandwaitid:=-1;
+      for j:=0 to length(createthreadandwait)-1 do
+      begin
+        if (i>createthreadandwait[j].position) or (i=length(assemblerlines)-1) then
+          createthreadandwaitid:=j;
+      end;
 
 
       tokenize(currentline,tokens);
@@ -1756,6 +2809,7 @@ begin
 
               setlength(assembled,length(assembled)+1);
               assembled[length(assembled)-1].address:=currentaddress;
+              assembled[length(assembled)-1].createthreadandwait:=createthreadandwaitid;
               assemble(currentline,currentaddress,assembled[length(assembled)-1].bytes, apnone, true);
               a:=length(assembled[length(assembled)-1].bytes);
 
@@ -1840,10 +2894,17 @@ begin
 
       setlength(assembled,length(assembled)+1);
       assembled[length(assembled)-1].address:=currentaddress;
+    assembled[length(assembled)-1].createthreadandwait:=createthreadandwaitid;
 
       if (currentline<>'') and (currentline[1]='<') then //special assembler instruction
       begin
 
+        if copy(currentline,1,11)='<REASSEMBLE' then
+        begin
+          l:=StrToInt(copy(currentline,12,length(currentline)-12));
+          BuildReassembledBytes(reassembles[l].address, currentaddress, assembled[length(assembled)-1].bytes);
+        end
+        else
         if copy(currentline,1,8)='<READMEM' then
         begin
           //lets try this for once
@@ -1876,52 +2937,7 @@ begin
     if length(loadbinary)>0 then
       for i:=0 to length(loadbinary)-1 do
       begin
-        ok1:=true;
-        try
-          testptr:=symhandler.getAddressFromName(loadbinary[i].address);
-        except
-          ok1:=false;
-        end;
-
-        if not ok1 then
-          for j:=0 to length(labels)-1 do
-            if uppercase(labels[j].labelname)=uppercase(loadbinary[i].address) then
-            begin
-              ok1:=true;
-              testptr:=labels[j].address;
-              break;
-            end;
-
-        if not ok1 then
-          for j:=0 to length(allocs)-1 do
-            if uppercase(allocs[j].varname)=uppercase(loadbinary[i].address) then
-            begin
-              ok1:=true;
-              testptr:=allocs[j].address;
-              break;
-            end;
-
-        if not ok1 then
-          for j:=0 to length(kallocs)-1 do
-            if uppercase(kallocs[j].varname)=uppercase(loadbinary[i].address) then
-            begin
-              ok1:=true;
-              testptr:=kallocs[j].address;
-              break;
-            end;
-
-        if not ok1 then
-          for j:=0 to length(defines)-1 do
-            if uppercase(defines[j].name)=uppercase(loadbinary[i].address) then
-            begin
-              try
-                testptr:=symhandler.getAddressFromName(defines[j].whatever);
-                ok1:=true;
-              except
-              end;
-
-              break;
-            end;
+        ok1:=TryGetAddressFromScript(loadbinary[i].address, testptr);
 
         if ok1 then
         begin
@@ -1944,7 +2960,18 @@ begin
       virtualprotectex(processhandle,pointer(testptr),length(assembled[i].bytes),op,op2);
 
       if not ok1 then ok2:=false;
+
+      if ok2 and (assembled[i].createthreadandwait<>-1) then
+      begin
+        for j:=0 to assembled[i].createthreadandwait do
+          if createthreadandwait[j].position<>-1 then
+            handleCreateThreadAndWait(j);
+      end;
     end;
+
+    for i:=0 to length(createthreadandwait)-1 do
+      if createthreadandwait[i].position<>-1 then
+        handleCreateThreadAndWait(i);
 
     if not ok2 then
     begin
@@ -1975,6 +3002,42 @@ begin
         setlength(ceallocarray,length(allocs));
         for i:=0 to length(allocs)-1 do
           ceallocarray[i]:=allocs[i];
+      end;
+
+      if exceptions<>nil then
+      begin
+        if (length(exceptions^)>0) and AutoAssemblerExceptionHandlerHasEntries then
+        begin
+          for i:=0 to length(exceptions^)-1 do
+            AutoAssemblerExceptionHandlerRemoveExceptionRange(exceptions^[i]);
+
+          AutoAssemblerExceptionHandlerApplyChanges;
+        end;
+
+        if length(exceptionlist)>0 then
+        begin
+          InitializeAutoAssemblerExceptionHandler;
+
+          for i:=length(exceptionlist)-1 downto 0 do
+          begin
+            if (not TryGetAddressFromScript(exceptionlist[i].trylabel, x)) or
+              (not TryGetAddressFromScript(exceptionlist[i].exceptlabel, testPtr2)) then
+              raise exception.Create('Failed to resolve {$TRY}/{$EXCEPT} labels');
+
+            AutoAssemblerExceptionHandlerAddExceptionRange(x, testPtr2);
+          end;
+
+          AutoAssemblerExceptionHandlerApplyChanges;
+        end;
+
+        setlength(exceptions^, length(exceptionlist));
+        for i:=0 to length(exceptionlist)-1 do
+        begin
+          if not TryGetAddressFromScript(exceptionlist[i].trylabel, x) then
+            raise exception.Create('Failed to resolve {$TRY} label');
+
+          exceptions^[i]:=x;
+        end;
       end;
 
 
@@ -2036,52 +3099,7 @@ begin
       if length(createthread)>0 then
         for i:=0 to length(createthread)-1 do
         begin
-          ok1:=true;
-          try
-            testptr:=symhandler.getAddressFromName(createthread[i]);
-          except
-            ok1:=false;
-          end;
-
-          if not ok1 then
-            for j:=0 to length(labels)-1 do
-              if uppercase(labels[j].labelname)=uppercase(createthread[i]) then
-              begin
-                ok1:=true;
-                testptr:=labels[j].address;
-                break;
-              end;
-
-          if not ok1 then
-            for j:=0 to length(allocs)-1 do
-              if uppercase(allocs[j].varname)=uppercase(createthread[i]) then
-              begin
-                ok1:=true;
-                testptr:=allocs[j].address;
-                break;
-              end;
-
-          if not ok1 then
-            for j:=0 to length(kallocs)-1 do
-              if uppercase(kallocs[j].varname)=uppercase(createthread[i]) then
-              begin
-                ok1:=true;
-                testptr:=kallocs[j].address;
-                break;
-              end;
-
-          if not ok1 then
-            for j:=0 to length(defines)-1 do
-              if uppercase(defines[j].name)=uppercase(createthread[i]) then
-              begin
-                try
-                  testptr:=symhandler.getAddressFromName(defines[j].whatever);
-                  ok1:=true;
-                except
-                end;
-
-                break;
-              end;
+          ok1:=TryGetAddressFromScript(createthread[i], testptr);
 
           if ok1 then //address found
           begin
@@ -2134,6 +3152,8 @@ begin
 
 
     tokens.free;
+    parameters.free;
+    potentiallabels.Free;
 
     if targetself then
     begin
@@ -2206,14 +3226,14 @@ begin
 
   for i:=0 to code.Count-1 do
   begin
-    if (uppercase(code[i]))='[ENABLE]' then
+    if (uppercase(trim(code[i])))='[ENABLE]' then
     begin
       insideenable:=true;
       insidedisable:=false;
       continue;
     end;
 
-    if (uppercase(code[i]))='[DISABLE]' then
+    if (uppercase(trim(code[i])))='[DISABLE]' then
     begin
       insideenable:=false;
       insidedisable:=true;
@@ -2231,7 +3251,7 @@ begin
 
 end;
 
-procedure stripCPUspecificCode(code: tstrings);
+procedure stripCPUspecificCode(code: tstrings; strip32bit: boolean);
 var i: integer;
   s: string;
   inexcludedbitblock: boolean;
@@ -2244,33 +3264,29 @@ begin
 
     if s='[32-BIT]' then
     begin
-      {$ifdef cpu64}
-      inexcludedbitblock:=true;
-      {$endif}
+      if strip32bit then
+        inexcludedbitblock:=true;
       code[i]:=' ';
     end;
 
     if s='[/32-BIT]' then
     begin
-      {$ifdef cpu64}
-      inexcludedbitblock:=false;
-      {$endif}
+      if strip32bit then
+        inexcludedbitblock:=false;
       code[i]:=' ';
     end;
 
     if s='[64-BIT]' then
     begin
-      {$ifdef cpu32}
-      inexcludedbitblock:=true;
-      {$endif}
+      if not strip32bit then
+        inexcludedbitblock:=true;
       code[i]:=' ';
     end;
 
     if s='[/64-BIT]' then
     begin
-      {$ifdef cpu32}
-      inexcludedbitblock:=false;
-      {$endif}
+      if not strip32bit then
+        inexcludedbitblock:=false;
       code[i]:=' ';
     end;
 
@@ -2282,14 +3298,14 @@ begin
   end;
 end;
 
-function autoassemble(code: Tstrings; popupmessages,enable,syntaxcheckonly, targetself: boolean;var CEAllocarray: TCEAllocArray; registeredsymbols: tstringlist=nil): boolean; overload;
+function autoassemble(code: Tstrings; popupmessages,enable,syntaxcheckonly, targetself: boolean;var CEAllocarray: TCEAllocArray; registeredsymbols: tstringlist=nil; exceptions: PCEExceptionListArray=nil): boolean; overload;
 {
 targetself defines if the process that gets injected to is CE itself or the target process
 }
 var tempstrings: tstringlist;
-    i,j: integer;
-    currentline: string;
+  i: integer;
     enablepos,disablepos: integer;
+  strip32bitcode: boolean;
 begin
   //add line numbers to the code
   for i:=0 to code.Count-1 do
@@ -2344,10 +3360,13 @@ begin
       end;
     end;
 
+    strip32bitcode:=processhandler.is64Bit;
     if targetself then
-      Stripcpuspecificcode(tempstrings);
+      strip32bitcode:={$ifdef cpu64}true{$else}false{$endif};
 
-    result:=autoassemble2(tempstrings,popupmessages,syntaxcheckonly,targetself,ceallocarray, registeredsymbols);
+    Stripcpuspecificcode(tempstrings, strip32bitcode);
+
+    result:=autoassemble2(tempstrings,popupmessages,syntaxcheckonly,targetself,ceallocarray, registeredsymbols, exceptions);
   finally
     tempstrings.Free;
   end;
