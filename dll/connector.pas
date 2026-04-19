@@ -7,7 +7,7 @@ interface
 uses
   Classes, SysUtils, symbolhandler, CEFuncProc, windows, PEInfounit,
   MemoryRecordDatabase, MemoryRecordUnit, Dialogs, AddressChangeUnit,
-  memscan,scanner, CustomTypeHandler;
+  memscan,scanner, CustomTypeHandler, LazUTF8;
 
 //procedure ILoadCommonModuleList; stdcall;
 procedure IGetProcessList(out processes : WideString);stdcall;
@@ -53,6 +53,16 @@ var
   scanner_ : TIScanner;
 
 implementation
+
+function BStrToCEString(const value: WideString): string;
+begin
+  Result:=UTF8ToAnsi(UTF16ToUTF8(value));
+end;
+
+function CEStringToBStr(const value: string): WideString;
+begin
+  Result:=UTF8ToUTF16(value);
+end;
 
 procedure GetEntryPointAndDataBase(var code: ptrUint; var data: ptrUint);
 var modulelist: tstringlist;
@@ -152,7 +162,7 @@ begin
   try
     _modules := TStringList.Create;
     GetModuleList(_modules,withSystemModules);
-    modules := _modules.Text;
+    modules := CEStringToBStr(_modules.Text);
   finally
     _modules.Free;
   end;
@@ -165,7 +175,7 @@ begin
   try
      process := TStringList.Create();
      GetProcessList(process);
-     processes := process.Text;
+     processes := CEStringToBStr(process.Text);
   finally
      process.Free;
   end;
@@ -174,7 +184,7 @@ end;
 procedure IOpenProcess(pid : WideString);stdcall;
 begin
      IResetTable();
-     PWOP(pid);
+     PWOP(BStrToCEString(pid));
      openProcessEpilogue();
      symhandler.reinitialize();
      symhandler.waitforsymbolsloaded;
@@ -197,7 +207,7 @@ var
 begin
   if recordTable <> nil then
   begin
-    recordTable.addAutoAssembleScript(name,script);
+    recordTable.addAutoAssembleScript(BStrToCEString(name),BStrToCEString(script));
   end;
 end;
 
@@ -235,7 +245,7 @@ var
 begin
   if recordTable <> nil then
     begin
-      recordTable.addAddressManually(initialaddress,vartype);
+      recordTable.addAddressManually(BStrToCEString(initialaddress),vartype);
     end;
 end;
 
@@ -244,7 +254,7 @@ var
   memrec : TMemoryRecord;
 begin
     memrec := recordTable.getRecordWithID(id);
-    value := memrec.GetValue;
+    value := CEStringToBStr(memrec.GetValue);
 end;
 
 procedure ISetValue(id : integer ; value : WideString ; freezer : boolean);stdcall;
@@ -252,7 +262,7 @@ var
   memrec : TMemoryRecord;
 begin
     memrec := recordTable.getRecordWithID(id);
-    memrec.SetValue(value,freezer);
+    memrec.SetValue(BStrToCEString(value),freezer);
 end;
 
 procedure IInitMemoryScanner(hwnd : THandle); stdcall;
@@ -273,7 +283,13 @@ end;
 
 procedure INewScan();stdcall;
 begin
-  scanner_.memscan.newscan;
+  if assigned(scanner_) then
+  begin
+    if assigned(scanner_.foundlist) then
+      scanner_.foundlist.Deinitialize;
+
+    scanner_.memscan.newscan;
+  end;
 end;
 
 procedure IFirstScan(scanOption: TScanOption; variableType: TVariableType;
@@ -284,14 +300,14 @@ var
   scanstart,scanend : PtrUint;
   v1,v2:string;
 begin
-  scanstart := StrToQWordEx(startaddress);
-  scanend := StrToQWordEx(stopaddress);
-  v1 := utf8toansi(scanvalue1);
-  v2 := utf8toansi(scanvalue2);
+  scanstart := StrToQWordEx(BStrToCEString(startaddress));
+  scanend := StrToQWordEx(BStrToCEString(stopaddress));
+  v1 := BStrToCEString(scanvalue1);
+  v2 := BStrToCEString(scanvalue2);
   scanner_.memscan.firstscan(scanOption,variableType,
   roundingtype,v1,v2,scanstart,scanend,
   hexadecimal,binaryStringAsDecimal,unicode,casesensitive,
-  fastscanmethod,fastscanparameter,nil);
+  fastscanmethod,BStrToCEString(fastscanparameter),nil);
 end;
 
 procedure INextScan(scanOption: TScanOption; roundingtype: TRoundingType;
@@ -304,12 +320,12 @@ begin
   if assigned(scanner_) then
   begin
     scanner_.foundlist.Deinitialize;
-    v1 := utf8toansi(scanvalue1);
-    v2 := utf8toansi(scanvalue2);
+    v1 := BStrToCEString(scanvalue1);
+    v2 := BStrToCEString(scanvalue2);
     scanner_.memscan.nextscan(scanOption,
     roundingtype, v1,v2,
     hexadecimal,binaryStringAsDecimal,unicode,casesensitive,
-    percentage,compareToSavedScan,'');
+    percentage,compareToSavedScan,BStrToCEString(savedscanname));
   end;
 end;
 
@@ -329,8 +345,8 @@ begin
   if assigned(scanner_) then
   begin
     address_ := scanner_.foundlist.GetAddress(i,extra,value_);
-    address := IntToHex(address_,8);
-    value := value_;
+    address := CEStringToBStr(IntToHex(address_,8));
+    value := CEStringToBStr(value_);
   end
   else begin
     address := 'null';

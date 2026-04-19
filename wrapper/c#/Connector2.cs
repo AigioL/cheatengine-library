@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace CheatEngine;
@@ -102,7 +104,7 @@ public sealed unsafe partial class CheatEngineLibrary
 #endif
     }
 
-    static IntPtr ResolveLibraryImport(string libraryName, System.Reflection.Assembly assembly, DllImportSearchPath? searchPath)
+    static IntPtr ResolveLibraryImport(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
         if (!string.Equals(libraryName, DllName, StringComparison.Ordinal))
         {
@@ -237,6 +239,47 @@ public sealed unsafe partial class CheatEngineLibrary
     /// </summary>
     /// <param name="processes">接收进程列表</param>
     public void iGetProcessList(out string processes) => GetProcessListNative(out processes);
+
+    public static bool TryGetProcessId(ReadOnlySpan<char> processListLine, out int pid)
+    {
+        processListLine = processListLine.Trim();
+        processListLine = processListLine.TrimStart('0');
+
+        var index = processListLine.IndexOf('-');
+        if (index > 0)
+        {
+            processListLine = processListLine[..index];
+        }
+        return int.TryParse(processListLine, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pid);
+    }
+
+    public static string? GetHexProcessId(ReadOnlySpan<char> processListLine)
+    {
+        processListLine = processListLine.Trim();
+
+        var split = processListLine.Split('-');
+        while (split.MoveNext())
+        {
+            var it = processListLine[split.Current];
+            bool isAllAsciiHexDigit = true;
+            for (int i = 0; i < it.Length; i++)
+            {
+                var it2 = it[i];
+                if (!char.IsAsciiHexDigit(it2))
+                {
+                    isAllAsciiHexDigit = false;
+                    break;
+                }
+            }
+
+            if (isAllAsciiHexDigit)
+            {
+                return new string(it);
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// 打开指定 ProcessId 的进程，并清空 Virtual Cheat Table 
